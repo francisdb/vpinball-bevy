@@ -15,12 +15,12 @@ use std::collections::HashMap;
 use std::env;
 use std::path::Path;
 use std::process::ExitCode;
-use vpin::vpx::VPX;
 use vpin::vpx::gameitem::GameItemEnum;
 use vpin::vpx::gameitem::primitive::{Primitive, ReadMesh};
 use vpin::vpx::gameitem::wall::Wall;
 use vpin::vpx::material::MaterialType;
 use vpin::vpx::model::Vertex3dNoTex2;
+use vpin::vpx::{VPX, vpu_to_m};
 
 #[derive(Component)]
 struct Table;
@@ -33,38 +33,6 @@ struct TableResource {
     vpx: VPX,
     table_width_m: f32,
     table_height_m: f32,
-}
-
-// Conversions to/from VP units (50 VPU = 1.0625 inches which is 1"1/16, the default size of a ball, 1 inch is 2.54cm)
-// These value are very slightly off from original values which used a VPU to MM of 0.540425 instead of 0.53975 (result of the following formula)
-// So it used to be 0.125% larger which is not noticeable but makes it difficult to have perfect matches when playing between apps
-// #define MMTOVPU(x) ((x) * (float)(50. / (25.4 * 1.0625)))
-// #define CMTOVPU(x) ((x) * (float)(50. / (2.54 * 1.0625)))
-// #define VPUTOMM(x) ((x) * (float)(25.4 * 1.0625 / 50.))
-// #define VPUTOCM(x) ((x) * (float)(2.54 * 1.0625 / 50.))
-
-/// Convert from visual pinball units to millimeters
-#[inline(always)]
-pub fn mm_to_vpu(x: f32) -> f32 {
-    x * (50.0 / (25.4 * 1.0625))
-}
-
-/// Convert from visual pinball units to millimeters
-#[inline(always)]
-pub fn vpu_to_mm(x: f32) -> f32 {
-    x * (25.4 * 1.0625 / 50.0)
-}
-
-/// Convert from meters to visual pinball units
-#[inline(always)]
-pub fn m_to_vpu(x: f32) -> f32 {
-    x * 50.0 / (0.0254 * 1.0625)
-}
-
-/// Convert from visual pinball units to meters
-#[inline(always)]
-pub fn vpu_to_m(x: f32) -> f32 {
-    x * 0.0254 * 1.0625 / 50.0
 }
 
 pub struct HelloPlugin;
