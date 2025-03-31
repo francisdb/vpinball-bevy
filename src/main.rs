@@ -9,8 +9,6 @@ use bevy::asset::io::{AssetSource, AssetSourceId};
 use bevy::core_pipeline::Skybox;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
-use bevy::render::render_resource::Extent3d;
-use bevy::utils::info;
 use std::collections::HashMap;
 use std::env;
 use std::path::Path;
@@ -91,6 +89,7 @@ fn main() -> ExitCode {
         .insert_resource(AmbientLight {
             color: Color::WHITE,
             brightness: 50.0,
+            affects_lightmapped_meshes: true,
         })
         .add_plugins(DefaultPlugins)
         .add_plugins(HelloPlugin)
@@ -127,7 +126,7 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     table: Res<TableResource>,
 ) {
-    if let Some(env_image) = &table.vpx.gamedata.env_image {
+    if let Some(_env_image) = &table.vpx.gamedata.env_image {
         // TODO Add environment map for reflections
     }
 
@@ -307,7 +306,7 @@ fn create_materials(
     material_map
 }
 
-fn spawn_wall(wall: &Wall) {
+fn spawn_wall(_wall: &Wall) {
     //info!("Spawning wall {}", wall.name);
     // TODO we have to create a mesh for the wall
     // A wall defines a polygon in 2D space and a bottom and top height

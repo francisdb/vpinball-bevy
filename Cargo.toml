@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.15.3", features = ["webp"] }
+bevy = { version = "0.16.0-rc.2", features = ["webp"] }
 #vpin = "0.17.6"
 vpin = { path = "../vpin" }
 

@@ -1,6 +1,5 @@
 use crate::TableResource;
 use bevy::app::Plugin;
-use bevy::core_pipeline::Skybox;
 use bevy::input::mouse::MouseWheel;
 use bevy::math::{Quat, Vec3};
 use bevy::prelude::*;
@@ -19,7 +18,7 @@ fn spawn_camera_system(
     mut commands: Commands,
     table_resource: Res<TableResource>,
     asset_server: Res<AssetServer>,
-    mut images: ResMut<Assets<Image>>,
+    //mut images: ResMut<Assets<Image>>,
 ) {
     // camera
     // 0,0 is the top left of the table
