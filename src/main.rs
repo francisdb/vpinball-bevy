@@ -33,6 +33,12 @@ struct TableResource {
     table_height_m: f32,
 }
 
+impl TableResource {
+    fn table_size(&self) -> Vec2 {
+        Vec2::new(self.table_width_m, self.table_height_m)
+    }
+}
+
 pub struct HelloPlugin;
 
 impl Plugin for HelloPlugin {
@@ -47,6 +53,20 @@ struct MemoryDir {
     dir: Dir,
 }
 
+/// Renders a Visual Pinball table in Bevy
+///
+/// In Visual Pinball (right handed Z up):
+/// The X axis goes from left to right (+X points right).
+/// The Y axis goes from far to near (+Y points towards you).
+/// the Z axis goes from top to bottom (+Z points up).
+///
+/// In Bevy (right handed Y up):
+/// The X axis goes from left to right (+X points right).
+/// The Y axis goes from bottom to top (+Y points up).
+/// The Z axis goes from far to near (+Z points towards you, out of the screen).
+///
+/// https://bevy-cheatbook.github.io/fundamentals/coords.html
+///
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
     let table_path = args.get(1).expect("Expected a table name argument");
@@ -87,8 +107,11 @@ fn main() -> ExitCode {
         // Set the background color to light gray
         .insert_resource(ClearColor(Color::srgb(0.0, 0.0, 0.0)))
         .insert_resource(AmbientLight {
-            color: Color::WHITE,
-            brightness: 50.0,
+            color: Color::BLACK,
+            // TODO get this from the table
+            // there is a color (black in the default table)
+            // and a scene lighting scale? (daynight?)
+            brightness: 2.0,
             affects_lightmapped_meshes: true,
         })
         .add_plugins(DefaultPlugins)
@@ -126,6 +149,8 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     table: Res<TableResource>,
 ) {
+    draw_reference_plane(&mut commands, &mut meshes, &mut materials);
+
     if let Some(_env_image) = &table.vpx.gamedata.env_image {
         // TODO Add environment map for reflections
     }
@@ -148,6 +173,76 @@ fn setup(
     // Chrome ball at the center of the table (1.0625 inches standard pinball size)
     // default vpinball ball diameter is 50 VPU
 
+    spawn_ball(
+        mem_dir,
+        asset_server,
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &table,
+        table_center,
+    );
+
+    // create materials
+    // new map of material name to material handle
+
+    let material_map = create_materials(&table, &mut materials);
+
+    // render all vpinball primitives
+    for item in &table.vpx.gameitems {
+        match item {
+            GameItemEnum::Primitive(primitive) => {
+                // make a mesh from the primitive
+                let mesh = primitive.read_mesh().unwrap();
+                if let Some(ReadMesh { vertices, indices }) = mesh {
+                    spawn_primitive(
+                        &mut commands,
+                        &mut meshes,
+                        &material_map,
+                        primitive,
+                        vertices,
+                        indices,
+                    );
+                } else {
+                    info!("No mesh found for primitive {}", primitive.name);
+                }
+            }
+            GameItemEnum::Light(light) => {
+                let color = Color::srgb_u8(light.color.r, light.color.g, light.color.b);
+                let position = Vec3::new(
+                    vpu_to_m(light.center.x),
+                    vpu_to_m(light.height.unwrap_or(0.0)),
+                    vpu_to_m(light.center.y),
+                );
+                let transform = Transform::from_translation(position);
+                commands.spawn((
+                    PointLight {
+                        shadows_enabled: false,
+                        range: vpu_to_m(light.falloff_radius),
+                        intensity: light.intensity,
+                        color,
+                        ..default()
+                    },
+                    transform,
+                ));
+            }
+            GameItemEnum::Wall(wall) => spawn_wall(wall),
+            _other => {}
+        }
+    }
+
+    spawn_overhead_lights(&mut commands, table);
+}
+
+fn spawn_ball(
+    mem_dir: ResMut<MemoryDir>,
+    asset_server: Res<AssetServer>,
+    commands: &mut Commands,
+    mut meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    table: &Res<TableResource>,
+    table_center: Vec3,
+) {
     // TODO find out what the difference between ball_image and ball_image_front is
     //   and what the audit about old ball image is.
     // This image is probably static if spherical map is disabled
@@ -192,70 +287,104 @@ fn setup(
 
     let ball_radius_m = vpu_to_m(50.0 / 2.0);
     commands.spawn((
+        Name("ChromeBall".to_string()),
         Mesh3d(meshes.add(Sphere::new(ball_radius_m))),
         MeshMaterial3d(chrome_material),
-        Transform::from_xyz(table_center.x, table_center.y, -ball_radius_m),
-        Name("ChromeBall".to_string()),
+        Transform::from_xyz(table_center.x, ball_radius_m, table_center.y),
     ));
+}
 
-    // create materials
-    // new map of material name to material handle
+/// Draws a 2x2 reference plane in the X-Z plane but 1mm below the table to avoid z-fighting
+/// TODO make this a gizmo reference grid
+fn draw_reference_plane(
+    commands: &mut Commands,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+) {
+    let half_width = 1.0;
+    let reference_plane = meshes.add(Rectangle::new(half_width * 2.0, half_width * 2.0));
+    let grid_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.8, 0.8, 0.8),
+        metallic: 0.0,
+        perceptual_roughness: 0.9,
+        reflectance: 0.1,
+        // Optional grid texture
+        // base_color_texture: Some(asset_server.load("textures/grid.png")),
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+    commands.spawn((
+        Name("ReferenceGrid".to_string()),
+        Mesh3d(reference_plane),
+        MeshMaterial3d(grid_material),
+        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+            .with_translation(Vec3::new(0.0, -0.001, 0.0)),
+    ));
+}
 
-    let material_map = create_materials(&table, &mut materials);
+fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableResource>) {
+    // Visual Pinball defines two overhead lights positioned at 1/3 and 2/3 of the table length
 
-    // render all vpinball primitives
-    for item in &table.vpx.gameitems {
-        match item {
-            GameItemEnum::Primitive(primitive) => {
-                // make a mesh from the primitive
-                let mesh = primitive.read_mesh().unwrap();
-                if let Some(ReadMesh { vertices, indices }) = mesh {
-                    spawn_primitive(
-                        &mut commands,
-                        &mut meshes,
-                        &material_map,
-                        primitive,
-                        vertices,
-                        indices,
-                    );
-                } else {
-                    info!("No mesh found for primitive {}", primitive.name);
-                }
-            }
-            GameItemEnum::Light(light) => {
-                let color = Color::srgb_u8(light.color.r, light.color.g, light.color.b);
-                let position = Vec3::new(
-                    vpu_to_m(light.center.x),
-                    vpu_to_m(light.center.y),
-                    vpu_to_m(light.height.unwrap_or(0.0)),
-                );
-                let transform = Transform::from_translation(position);
-                commands.spawn((
-                    PointLight {
-                        shadows_enabled: false,
-                        range: vpu_to_m(light.falloff_radius),
-                        intensity: light.intensity,
-                        color,
-                        ..default()
-                    },
-                    transform,
-                ));
-            }
-            GameItemEnum::Wall(wall) => spawn_wall(wall),
-            _other => {}
-        }
-    }
+    // 2 overhead lights with power, height, color and range
+    //    m_table->m_Light[0].pos.x = m_table->m_right * 0.5f;
+    //    m_table->m_Light[1].pos.x = m_table->m_right * 0.5f;
+    //    m_table->m_Light[0].pos.y = m_table->m_bottom * (float)(1.0 / 3.0);
+    //    m_table->m_Light[1].pos.y = m_table->m_bottom * (float)(2.0 / 3.0);
+    //    m_table->m_Light[0].pos.z = m_table->m_lightHeight;
+    //    m_table->m_Light[1].pos.z = m_table->m_lightHeight;
+    //
+    // LZDI
+    //    vec4 emission = convertColor(m_table->m_Light[0].emission, 1.f);
+    //    emission.x *= m_table->m_lightEmissionScale * m_globalEmissionScale;
+    //    emission.y *= m_table->m_lightEmissionScale * m_globalEmissionScale;
+    //    emission.z *= m_table->m_lightEmissionScale * m_globalEmissionScale;
+    // LZRA
+    //   range
 
-    // Room light
-    let light_position = table_center;
+    //       PropRGB("Light Em. Color", m_table, is_live, &(m_table->m_Light[0].emission), m_live_table ? &(m_live_table->m_Light[0].emission) : nullptr);
+    //       PropFloat("Light Em. Scale", m_table, is_live, &(m_table->m_lightEmissionScale), m_live_table ? &(m_live_table->m_lightEmissionScale) : nullptr, 20000.0f, 100000.0f, "%.0f", ImGuiInputTextFlags_CharsDecimal, reinit_lights);
+    //       PropFloat("Light Height", m_table, is_live, &(m_table->m_lightHeight), m_live_table ? &(m_live_table->m_lightHeight) : nullptr, 20.0f, 100.0f, "%.0f");
+    //       PropFloat("Light Range", m_table, is_live, &(m_table->m_lightRange), m_live_table ? &(m_live_table->m_lightRange) : nullptr, 200.0f, 1000.0f, "%.0f");
+    //
+
+    let overhead_lights_height = vpu_to_m(table.vpx.gamedata.light_height);
+    // TODO what units are these? vpu_to_m(table.vpx.gamedata.light_range)
+    let overhead_lights_range = overhead_lights_height + 0.5;
+    // In lumens
+    let overhead_lights_intensity = 20_000.0;
+    info!(
+        "Placing 2 overhead lights at height {:?}m and range {}m",
+        overhead_lights_height, overhead_lights_range
+    );
+
+    let overhead_light_1_pos = Vec3::new(
+        vpu_to_m(table.vpx.gamedata.right * 0.5),
+        overhead_lights_height,
+        vpu_to_m(table.vpx.gamedata.bottom * (1.0 / 3.0)),
+    );
     commands.spawn((
         PointLight {
             shadows_enabled: true,
-            range: 1.0,
-            intensity: 1_000.0,
+            range: overhead_lights_range,
+            intensity: overhead_lights_intensity,
             ..default()
         },
-        Transform::from_xyz(light_position.x, light_position.y, light_position.z - 0.5),
+        Transform::from_translation(overhead_light_1_pos),
+    ));
+
+    let overhead_light_2_pos = Vec3::new(
+        vpu_to_m(table.vpx.gamedata.right * 0.5),
+        overhead_lights_height,
+        vpu_to_m(table.vpx.gamedata.bottom * (2.0 / 3.0)),
+    );
+    commands.spawn((
+        PointLight {
+            shadows_enabled: true,
+            range: overhead_lights_range,
+            intensity: overhead_lights_intensity,
+            ..default()
+        },
+        Transform::from_translation(overhead_light_2_pos),
     ));
 }
 
@@ -330,10 +459,10 @@ fn spawn_primitive(
         RenderAssetUsages::RENDER_WORLD,
     );
 
-    let positions: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.x, v.y, v.z]).collect();
+    let positions: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.x, v.z, v.y]).collect();
     bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
 
-    let normals: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.nx, v.ny, v.nz]).collect();
+    let normals: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.nx, v.nz, v.ny]).collect();
     bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
 
     let uvs: Vec<[f32; 2]> = vertices.iter().map(|(_, v)| [v.tu, v.tv]).collect();
