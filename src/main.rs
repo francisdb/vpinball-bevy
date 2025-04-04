@@ -298,9 +298,13 @@ fn spawn_game_items(
             GameItemEnum::Light(light) => {
                 spawn_light(&mut commands, light);
             }
-            GameItemEnum::Wall(wall) => {
-                spawn_wall(&mut commands, &mut materials, &mut meshes, wall)
-            }
+            GameItemEnum::Wall(wall) => spawn_wall(
+                &mut commands,
+                &mut materials,
+                material_map,
+                &mut meshes,
+                wall,
+            ),
             _other => {}
         }
     }
@@ -433,7 +437,7 @@ fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableResource>) {
     // TODO what units are these? vpu_to_m(table.vpx.gamedata.light_range)
     let overhead_lights_range = overhead_lights_height + 2.0;
     // In lumens
-    let overhead_lights_intensity = 50_000.0;
+    let overhead_lights_intensity = 500_000.0;
     info!(
         "Placing 2 overhead lights at height {:?}m and range {}m",
         overhead_lights_height, overhead_lights_range
@@ -536,6 +540,7 @@ fn create_materials(
 fn spawn_wall(
     commands: &mut Commands,
     materials: &mut ResMut<Assets<StandardMaterial>>,
+    material_map: &HashMap<String, Handle<StandardMaterial>>,
     meshes: &mut ResMut<Assets<Mesh>>,
     wall: &Wall,
 ) {
@@ -614,18 +619,22 @@ fn spawn_wall(
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_indices(Indices::U32(indices.iter().map(|&i| i as u32).collect()));
 
-    let material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.8, 0.7, 0.5),
-        perceptual_roughness: 0.8,
-        ..default()
-    });
+    let material_handle = material_map
+        .get(wall.top_material.as_str())
+        .unwrap_or_else(|| {
+            warn!(
+                "Material for wall {} not found: {}. Using default material",
+                wall.name, wall.top_material
+            );
+            &material_map["default"]
+        });
 
     let mesh_handle = meshes.add(mesh);
 
     commands.spawn((
         Name::new(format!("Wall_{}", wall.name)),
         Mesh3d(mesh_handle),
-        MeshMaterial3d(material),
+        MeshMaterial3d(material_handle.clone()),
         Transform::default(),
         NoFrustumCulling,
     ));
