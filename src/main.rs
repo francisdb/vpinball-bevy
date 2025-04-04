@@ -437,7 +437,7 @@ fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableResource>) {
     // TODO what units are these? vpu_to_m(table.vpx.gamedata.light_range)
     let overhead_lights_range = overhead_lights_height + 2.0;
     // In lumens
-    let overhead_lights_intensity = 500_000.0;
+    let overhead_lights_intensity = 50_000.0;
     info!(
         "Placing 2 overhead lights at height {:?}m and range {}m",
         overhead_lights_height, overhead_lights_range
