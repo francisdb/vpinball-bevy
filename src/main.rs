@@ -1,6 +1,5 @@
 mod camera;
 mod gizmos;
-//mod surface_mesh_generator;
 
 use crate::camera::RotatingCameraPlugin;
 use crate::gizmos::ControlGizmoPlugin;
@@ -22,6 +21,7 @@ use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 use vpin::vpx::gameitem::GameItemEnum;
+use vpin::vpx::gameitem::dragpoint::DragPoint;
 use vpin::vpx::gameitem::light::Light;
 use vpin::vpx::gameitem::primitive::{Primitive, ReadMesh};
 use vpin::vpx::gameitem::wall::Wall;
@@ -124,14 +124,25 @@ fn main() -> ExitCode {
         // .insert_resource(DirectionalLightShadowMap { size: 4096 })
         // .insert_resource(PointLightShadowMap { size: 4096 })
         .add_plugins((
-            DefaultPlugins.set(RenderPlugin {
-                render_creation: RenderCreation::Automatic(WgpuSettings {
-                    // WARN this is a native only feature. It will not work with webgl or webgpu
-                    features: WgpuFeatures::POLYGON_MODE_LINE,
+            DefaultPlugins
+                .set(RenderPlugin {
+                    render_creation: RenderCreation::Automatic(WgpuSettings {
+                        // WARN this is a native only feature. It will not work with webgl or webgpu
+                        features: WgpuFeatures::POLYGON_MODE_LINE,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: format!(
+                            "Pinviewer - {}",
+                            path.file_name().unwrap().to_string_lossy()
+                        ),
+                        ..default()
+                    }),
                     ..default()
                 }),
-                ..default()
-            }),
             // You need to add this plugin to enable wireframe rendering
             WireframePlugin,
         ))
@@ -255,7 +266,13 @@ fn setup(
 
     let material_map = create_materials(&table, &mut materials);
 
-    spawn_game_items(&mut commands, &mut meshes, &table, &material_map);
+    spawn_game_items(
+        &mut commands,
+        &mut meshes,
+        &mut materials,
+        &table,
+        &material_map,
+    );
 
     spawn_overhead_lights(&mut commands, table);
 }
@@ -263,6 +280,7 @@ fn setup(
 fn spawn_game_items(
     mut commands: &mut Commands,
     mut meshes: &mut ResMut<Assets<Mesh>>,
+    mut materials: &mut ResMut<Assets<StandardMaterial>>,
     table: &Res<TableResource>,
     material_map: &HashMap<String, Handle<StandardMaterial>>,
 ) {
@@ -280,7 +298,9 @@ fn spawn_game_items(
             GameItemEnum::Light(light) => {
                 spawn_light(&mut commands, light);
             }
-            GameItemEnum::Wall(wall) => spawn_wall(wall),
+            GameItemEnum::Wall(wall) => {
+                spawn_wall(&mut commands, &mut materials, &mut meshes, wall)
+            }
             _other => {}
         }
     }
@@ -309,9 +329,8 @@ fn spawn_light(commands: &mut Commands, light: &Light) {
         Name::new(light.name.to_string()),
         PointLight {
             // FIXME enabling shadows slows down the rendering
-            shadows_enabled: true,
-
-            shadow_depth_bias: 0.0,
+            // shadows_enabled: true,
+            // shadow_depth_bias: 0.0,
             range: vpu_to_m(light.falloff_radius),
             intensity: light.intensity,
             color,
@@ -385,34 +404,6 @@ fn spawn_ball(
     ));
 }
 
-/// Draws a 2x2 reference plane in the X-Z plane but 1mm below the table to avoid z-fighting
-/// TODO make this a gizmo reference grid
-fn spawn_reference_plane(
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-) {
-    let half_width = 1.0;
-    let reference_plane = meshes.add(Rectangle::new(half_width * 2.0, half_width * 2.0));
-    let grid_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.8, 0.8, 0.8),
-        metallic: 0.0,
-        perceptual_roughness: 0.9,
-        reflectance: 0.1,
-        // Optional grid texture
-        // base_color_texture: Some(asset_server.load("textures/grid.png")),
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
-    commands.spawn((
-        Name::new("ReferenceGrid".to_string()),
-        Mesh3d(reference_plane),
-        MeshMaterial3d(grid_material),
-        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
-            .with_translation(Vec3::new(0.0, -0.001, 0.0)),
-    ));
-}
-
 fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableResource>) {
     // Visual Pinball defines two overhead lights positioned at 1/3 and 2/3 of the table length
 
@@ -480,6 +471,7 @@ fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableResource>) {
     commands.spawn((
         Name::new("Overhead light front".to_string()),
         PointLight {
+            color,
             shadows_enabled: true,
             // without this we have no shadows for small objects
             shadow_depth_bias: 0.0,
@@ -541,13 +533,102 @@ fn create_materials(
     material_map
 }
 
-fn spawn_wall(_wall: &Wall) {
-    //info!("Spawning wall {}", wall.name);
-    // TODO we have to create a mesh for the wall
+fn spawn_wall(
+    commands: &mut Commands,
+    materials: &mut ResMut<Assets<StandardMaterial>>,
+    meshes: &mut ResMut<Assets<Mesh>>,
+    wall: &Wall,
+) {
+    info!("Spawning wall {}", wall.name);
+
+    // TODO apply CatmullCurve if the dragpoints are set to smooth
+    //   how is that curve then sampled for the mesh?
+
+    // for now we just spawn the top and not the walls. There is no bottom face.
+
     // A wall defines a polygon in 2D space and a bottom and top height
     // These are for example used for the plastics on top of the table features
 
     // https://bevyengine.org/examples/3d-rendering/generate-custom-mesh/
+
+    // wall contains dragpoints. These define a polygon in 2D space
+    // TODO we need to create a mesh from the wall dragpoints
+
+    // first we need to check if the wall.drag_points are in the right order, otherwise we need to reverse them
+
+    // print all drag points
+    for (i, drag_point) in wall.drag_points.iter().enumerate() {
+        info!("  drag point {}: {:?}", i, drag_point);
+    }
+
+    let mut drag_points = wall.drag_points.clone();
+
+    let reversed = ensure_ccw_winding(&mut drag_points);
+    if reversed {
+        info!("  drag points were in clockwise order, reversed");
+    } else {
+        info!("  drag points were in counterclockwise order");
+    }
+
+    // then we need to create a mesh from the dragpoints
+
+    // Create a mesh builder
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+
+    let top_height = vpu_to_m(wall.height_top);
+    let bottom_height = vpu_to_m(wall.height_bottom);
+
+    // Generate vertices for top face (all with the same height)
+    let num_points = drag_points.len();
+    let mut positions = Vec::with_capacity(num_points);
+    let mut normals = Vec::with_capacity(num_points);
+    let mut uvs = Vec::with_capacity(num_points);
+
+    for point in &drag_points {
+        // Position (x, top_height, y) -> Bevy uses y-up
+        positions.push([vpu_to_m(point.x), top_height, vpu_to_m(point.y)]);
+
+        // Normal points up for the top face
+        normals.push([0.0, 1.0, 0.0]);
+
+        // Simple UV mapping (could be improved)
+        uvs.push([point.x, point.y]);
+    }
+
+    // Triangulate the polygon using ear clipping (works for any polygon)
+    let positions_2d: Vec<Vec2> = positions
+        .iter()
+        .map(|p| Vec2::new(p[0], p[2])) // Use x,z as 2D coordinates
+        .collect();
+
+    let mut indices = triangulate_polygon(&positions_2d);
+    indices.reverse();
+    info!("  indices: {:?}", indices);
+
+    // Insert attributes
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    mesh.insert_indices(Indices::U32(indices.iter().map(|&i| i as u32).collect()));
+
+    let material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.8, 0.7, 0.5),
+        perceptual_roughness: 0.8,
+        ..default()
+    });
+
+    let mesh_handle = meshes.add(mesh);
+
+    commands.spawn((
+        Name::new(format!("Wall_{}", wall.name)),
+        Mesh3d(mesh_handle),
+        MeshMaterial3d(material),
+        Transform::default(),
+        NoFrustumCulling,
+    ));
 }
 
 /// Primitives are stored with inverted z axis
@@ -687,4 +768,135 @@ fn spawn_primitive(
     } else {
         info!("No mesh found for primitive {}", primitive.name);
     }
+}
+
+/// Determines if the points are in the correct winding order (counterclockwise)
+/// and reverses them if not.
+fn ensure_ccw_winding(drag_points: &mut Vec<DragPoint>) -> bool {
+    if drag_points.len() < 3 {
+        return false; // Not enough points to form a proper polygon
+    }
+
+    // Calculate the signed area of the polygon
+    // Positive area means counterclockwise winding
+    // Negative area means clockwise winding
+    let mut signed_area = 0.0;
+
+    for i in 0..drag_points.len() {
+        let j = (i + 1) % drag_points.len();
+        signed_area +=
+            (drag_points[i].x * drag_points[j].y) - (drag_points[j].x * drag_points[i].y);
+    }
+
+    // If signed area is negative, we have clockwise winding
+    // We need to reverse the points to get counterclockwise winding
+    if signed_area < 0.0 {
+        drag_points.reverse();
+        return true; // Points were reversed
+    }
+
+    false // Points were already in correct order
+}
+
+fn triangulate_polygon(vertices: &[Vec2]) -> Vec<usize> {
+    if vertices.len() < 3 {
+        return vec![];
+    }
+
+    // Initialize the list of indices
+    let mut indices = Vec::new();
+
+    // Create a mutable array of available vertices
+    let mut remaining: Vec<usize> = (0..vertices.len()).collect();
+
+    // Continue until we've used all vertices except the last 2
+    let mut attempts = 0;
+    let max_attempts = vertices.len() * vertices.len(); // Safety limit
+
+    while remaining.len() > 2 && attempts < max_attempts {
+        let n = remaining.len();
+
+        // Find an ear
+        for i in 0..n {
+            let prev = (i + n - 1) % n;
+            let curr = i;
+            let next = (i + 1) % n;
+
+            let prev_idx = remaining[prev];
+            let curr_idx = remaining[curr];
+            let next_idx = remaining[next];
+
+            let p0 = vertices[prev_idx];
+            let p1 = vertices[curr_idx];
+            let p2 = vertices[next_idx];
+
+            // Check if vertex forms an ear (internal angle < 180°)
+            if is_ear(vertices, &remaining, prev, curr, next) {
+                // Add triangle
+                indices.push(prev_idx as u32);
+                indices.push(curr_idx as u32);
+                indices.push(next_idx as u32);
+
+                // Remove the ear tip from remaining vertices
+                remaining.remove(curr);
+                break;
+            }
+        }
+
+        attempts += 1;
+    }
+
+    // Convert to the expected format
+    indices.iter().map(|&i| i as usize).collect()
+}
+
+fn is_ear(vertices: &[Vec2], remaining: &[usize], prev: usize, curr: usize, next: usize) -> bool {
+    let prev_idx = remaining[prev];
+    let curr_idx = remaining[curr];
+    let next_idx = remaining[next];
+
+    let p0 = vertices[prev_idx];
+    let p1 = vertices[curr_idx];
+    let p2 = vertices[next_idx];
+
+    // First, check if this is a convex corner
+    if !is_convex(p0, p1, p2) {
+        return false;
+    }
+
+    // Then check if any remaining vertex is inside this triangle
+    for &i in remaining {
+        if i == prev_idx || i == curr_idx || i == next_idx {
+            continue;
+        }
+
+        if point_in_triangle(vertices[i], p0, p1, p2) {
+            return false;
+        }
+    }
+
+    true
+}
+
+fn is_convex(p0: Vec2, p1: Vec2, p2: Vec2) -> bool {
+    // Calculate the cross product to determine convexity
+    let v1 = Vec2::new(p1.x - p0.x, p1.y - p0.y);
+    let v2 = Vec2::new(p2.x - p1.x, p2.y - p1.y);
+    let cross = v1.x * v2.y - v1.y * v2.x;
+
+    // Positive cross product means counter-clockwise, which is what we want
+    cross > 0.0
+}
+
+fn point_in_triangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
+    // Barycentric coordinate method
+    let area = 0.5 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y)).abs();
+
+    // Calculate areas of three triangles made by point p and vertices of the triangle
+    let alpha = 0.5 * ((b.y - c.y) * (p.x - c.x) + (c.x - b.x) * (p.y - c.y)) / area;
+    let beta = 0.5 * ((c.y - a.y) * (p.x - c.x) + (a.x - c.x) * (p.y - c.y)) / area;
+    let gamma = 1.0 - alpha - beta;
+
+    // If all coordinates are between 0 and 1, point is inside triangle
+    alpha >= 0.0 && beta >= 0.0 && gamma >= 0.0
 }
