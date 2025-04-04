@@ -2,6 +2,7 @@ use crate::TableResource;
 use bevy::app::Plugin;
 use bevy::input::mouse::MouseWheel;
 use bevy::math::{Quat, Vec3};
+use bevy::pbr::ShadowFilteringMethod;
 use bevy::prelude::*;
 
 pub(crate) struct RotatingCameraPlugin;
@@ -33,7 +34,7 @@ fn spawn_camera_system(
     let player_location = Vec3::new(
         table_center.x,
         default_player_eyes_height, // height above the table
-        table_size.y,               // up
+        table_size.y,
     );
 
     info!("Spawning camera at height {:?} m", player_location.z);
@@ -50,6 +51,7 @@ fn spawn_camera_system(
                 ..default()
             },
             camera_transform,
+            ShadowFilteringMethod::Hardware2x2,
         ))
         // .insert(Skybox {
         //     brightness: 2000.0,
@@ -69,35 +71,19 @@ fn get_table_center(table_size: Vec2) -> Vec3 {
     Vec3::new(table_size.x / 2.0, 0.0, table_size.y / 2.0)
 }
 
-fn rotate_camera_system(mut query: Query<&mut Transform, With<Camera3d>>, time: Res<Time>) {
-    let center = Vec3::ZERO;
-    // one full rotation every 15 seconds
-    let angle = time.delta_secs() * 2.0 * std::f32::consts::PI / 15.0;
-
-    for mut transform in query.iter_mut() {
-        let rotation = Quat::from_rotation_y(angle);
-        let offset = transform.translation - center;
-        let new_offset = rotation * offset;
-        transform.translation = center + new_offset;
-        transform.look_at(center, Vec3::Y);
-    }
-}
-
-fn height_camera_system(
-    mut query: Query<&mut Transform, With<Camera3d>>,
-    mut mouse_wheel_events: EventReader<MouseWheel>,
-    table_resource: Res<TableResource>,
-) {
-    let table_center = get_table_center(table_resource.table_size());
-
-    for mut transform in query.iter_mut() {
-        for event in mouse_wheel_events.read() {
-            let move_amount = event.y * 0.05; // Adjust the zoom sensitivity as needed
-            transform.translation.y += move_amount;
-            transform.look_at(table_center, Dir3::Y);
-        }
-    }
-}
+// fn rotate_camera_system(mut query: Query<&mut Transform, With<Camera3d>>, time: Res<Time>) {
+//     let center = Vec3::ZERO;
+//     // one full rotation every 15 seconds
+//     let angle = time.delta_secs() * 2.0 * std::f32::consts::PI / 15.0;
+//
+//     for mut transform in query.iter_mut() {
+//         let rotation = Quat::from_rotation_y(angle);
+//         let offset = transform.translation - center;
+//         let new_offset = rotation * offset;
+//         transform.translation = center + new_offset;
+//         transform.look_at(center, Vec3::Y);
+//     }
+// }
 
 fn move_camera_system(
     mut query: Query<&mut Transform, With<Camera3d>>,
@@ -139,5 +125,40 @@ fn move_camera_system(
             // Keep looking at the table center
             transform.look_at(table_center, Dir3::Y);
         }
+    }
+}
+
+fn height_camera_system(
+    mut query: Query<&mut Transform, With<Camera3d>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut mouse_wheel_events: EventReader<MouseWheel>,
+    time: Res<Time>,
+    table_resource: Res<TableResource>,
+) {
+    let table_center = get_table_center(table_resource.table_size());
+    let height_speed = 0.3; // in meters per second
+    let delta_time = time.delta_secs();
+
+    for mut transform in query.iter_mut() {
+        // for event in mouse_wheel_events.read() {
+        //     let move_amount = event.y * 0.05; // Adjust the zoom sensitivity as needed
+        //     transform.translation.y += move_amount;
+        // }
+
+        // Handle keyboard height adjustment
+        let mut height_change = 0.0;
+        if keyboard_input.pressed(KeyCode::PageUp) {
+            height_change += height_speed * delta_time;
+        }
+        if keyboard_input.pressed(KeyCode::PageDown) {
+            height_change -= height_speed * delta_time;
+        }
+
+        if height_change != 0.0 {
+            transform.translation.y += height_change;
+        }
+
+        // Ensure camera keeps looking at table center after any movement
+        transform.look_at(table_center, Dir3::Y);
     }
 }

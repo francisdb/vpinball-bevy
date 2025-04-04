@@ -1,19 +1,28 @@
 mod camera;
 mod gizmos;
+//mod surface_mesh_generator;
 
 use crate::camera::RotatingCameraPlugin;
 use crate::gizmos::ControlGizmoPlugin;
 use bevy::asset::RenderAssetUsages;
 use bevy::asset::io::memory::{Dir, MemoryAssetReader};
 use bevy::asset::io::{AssetSource, AssetSourceId};
+use bevy::color::palettes::basic::WHITE;
 use bevy::core_pipeline::Skybox;
+use bevy::pbr::wireframe::{Wireframe, WireframeConfig, WireframePlugin};
+use bevy::pbr::{DirectionalLightShadowMap, PointLightShadowMap};
 use bevy::prelude::*;
+use bevy::render::RenderPlugin;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::settings::{RenderCreation, WgpuFeatures, WgpuSettings};
+use bevy::render::view::NoFrustumCulling;
+use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use std::collections::HashMap;
 use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 use vpin::vpx::gameitem::GameItemEnum;
+use vpin::vpx::gameitem::light::Light;
 use vpin::vpx::gameitem::primitive::{Primitive, ReadMesh};
 use vpin::vpx::gameitem::wall::Wall;
 use vpin::vpx::material::MaterialType;
@@ -22,9 +31,6 @@ use vpin::vpx::{VPX, vpu_to_m};
 
 #[derive(Component)]
 struct Table;
-
-#[derive(Component)]
-struct Name(String);
 
 #[derive(Resource)]
 struct TableResource {
@@ -55,12 +61,12 @@ struct MemoryDir {
 
 /// Renders a Visual Pinball table in Bevy
 ///
-/// In Visual Pinball (right handed Z up):
+/// In Visual Pinball (right-handed Z up):
 /// The X axis goes from left to right (+X points right).
 /// The Y axis goes from far to near (+Y points towards you).
 /// the Z axis goes from top to bottom (+Z points up).
 ///
-/// In Bevy (right handed Y up):
+/// In Bevy (right-handed Y up):
 /// The X axis goes from left to right (+X points right).
 /// The Y axis goes from bottom to top (+Y points up).
 /// The Z axis goes from far to near (+Z points towards you, out of the screen).
@@ -111,13 +117,40 @@ fn main() -> ExitCode {
             // TODO get this from the table
             // there is a color (black in the default table)
             // and a scene lighting scale? (daynight?)
-            brightness: 2.0,
-            affects_lightmapped_meshes: true,
+            brightness: 1.0,
+            //affects_lightmapped_meshes: true,
         })
-        .add_plugins(DefaultPlugins)
+        // Increase the shadow map resolution
+        // .insert_resource(DirectionalLightShadowMap { size: 4096 })
+        // .insert_resource(PointLightShadowMap { size: 4096 })
+        .add_plugins((
+            DefaultPlugins.set(RenderPlugin {
+                render_creation: RenderCreation::Automatic(WgpuSettings {
+                    // WARN this is a native only feature. It will not work with webgl or webgpu
+                    features: WgpuFeatures::POLYGON_MODE_LINE,
+                    ..default()
+                }),
+                ..default()
+            }),
+            // You need to add this plugin to enable wireframe rendering
+            WireframePlugin,
+        ))
+        // Wireframes can be configured with this resource. This can be changed at runtime.
+        .insert_resource(WireframeConfig {
+            // The global wireframe config enables drawing of wireframes on every mesh,
+            // except those with `NoWireframe`. Meshes with `Wireframe` will always have a wireframe,
+            // regardless of the global configuration.
+            // FIXME when setting this to true our meshes are not rendered
+            //   same when adding the Wireframe component to the mesh
+            global: false,
+            // Controls the default color of all wireframes. Used as the default color for global wireframes.
+            // Can be changed per mesh using the `WireframeColor` component.
+            default_color: WHITE.into(),
+        })
         .add_plugins(HelloPlugin)
         .add_plugins(RotatingCameraPlugin)
         .add_plugins(ControlGizmoPlugin)
+        .add_plugins(WorldInspectorPlugin::new())
         .add_systems(Startup, setup_gizmo_config)
         .run();
     match app_exit {
@@ -137,7 +170,7 @@ fn setup_gizmo_config(mut gizmo_config_store: ResMut<GizmoConfigStore>) {
 }
 
 fn load_table(mut commands: Commands, table: Res<TableResource>) {
-    commands.spawn((Table, Name(table.vpx.gamedata.name.to_string())));
+    commands.spawn((Table, Name::new(table.vpx.gamedata.name.to_string())));
 }
 
 /// set up a simple 3D scene
@@ -149,29 +182,67 @@ fn setup(
     mut materials: ResMut<Assets<StandardMaterial>>,
     table: Res<TableResource>,
 ) {
-    draw_reference_plane(&mut commands, &mut meshes, &mut materials);
+    // // circular base
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Circle::new(4.0))),
+    //     MeshMaterial3d(materials.add(Color::WHITE)),
+    //     Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+    // ));
+    // // cube
+    // let cube_width = 0.04;
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Cuboid::new(cube_width, cube_width, cube_width))),
+    //     MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
+    //     Transform::from_xyz(0.0, cube_width / 2.0, 0.0),
+    // ));
+    // // cube
+    // let cube_width = 0.06;
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Cuboid::new(cube_width, cube_width, cube_width))),
+    //     MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
+    //     Transform::from_xyz(0.2, cube_width / 2.0, 0.0),
+    // ));
+    // // cube
+    // let cube_width = 0.08;
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Cuboid::new(cube_width, cube_width, cube_width))),
+    //     MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
+    //     Transform::from_xyz(0.4, cube_width / 2.0, 0.0),
+    // ));
+    // // cube
+    // let cube_width = 0.1;
+    // commands.spawn((
+    //     Mesh3d(meshes.add(Cuboid::new(cube_width, cube_width, cube_width))),
+    //     MeshMaterial3d(materials.add(Color::srgb_u8(124, 144, 255))),
+    //     Transform::from_xyz(0.6, cube_width / 2.0, 0.0),
+    // ));
+    // commands.spawn((
+    //     PointLight {
+    //         shadows_enabled: true,
+    //         shadow_depth_bias: 0.0,
+    //         range: 100.0,
+    //         intensity: 100000.0,
+    //         ..default()
+    //     },
+    //     Transform::from_xyz(1.0, 2.0, 1.0),
+    // ));
+
+    //spawn_reference_plane(&mut commands, &mut meshes, &mut materials);
 
     if let Some(_env_image) = &table.vpx.gamedata.env_image {
         // TODO Add environment map for reflections
     }
 
-    // TODO create vpinball lights
     // TODO use textures
-    // TODO scale everything to real world units in meters
-    // TODO rotate everything so that the table is almost parallel the ground
-
-    let table_center = Vec3::new(table.table_width_m / 2.0, table.table_height_m / 2.0, 0.0);
 
     // // for reference a 1 cm cube at the center of the table
+    // let table_center = Vec3::new(table.table_width_m / 2.0, table.table_height_m / 2.0, 0.0);
     // let color_light_blue: Color = Color::srgb_u8(124, 144, 255);
     // commands.spawn((
     //     Mesh3d(meshes.add(Cuboid::new(0.01, 0.01, 0.01))),
     //     MeshMaterial3d(materials.add(color_light_blue)),
     //     Transform::from_xyz(table_center.x, table_center.y, table_center.z - 0.005),
     // ));
-
-    // Chrome ball at the center of the table (1.0625 inches standard pinball size)
-    // default vpinball ball diameter is 50 VPU
 
     spawn_ball(
         mem_dir,
@@ -180,60 +251,79 @@ fn setup(
         &mut meshes,
         &mut materials,
         &table,
-        table_center,
     );
-
-    // create materials
-    // new map of material name to material handle
 
     let material_map = create_materials(&table, &mut materials);
 
-    // render all vpinball primitives
+    spawn_game_items(&mut commands, &mut meshes, &table, &material_map);
+
+    spawn_overhead_lights(&mut commands, table);
+}
+
+fn spawn_game_items(
+    mut commands: &mut Commands,
+    mut meshes: &mut ResMut<Assets<Mesh>>,
+    table: &Res<TableResource>,
+    material_map: &HashMap<String, Handle<StandardMaterial>>,
+) {
     for item in &table.vpx.gameitems {
         match item {
             GameItemEnum::Primitive(primitive) => {
-                // make a mesh from the primitive
-                let mesh = primitive.read_mesh().unwrap();
-                if let Some(ReadMesh { vertices, indices }) = mesh {
-                    spawn_primitive(
-                        &mut commands,
-                        &mut meshes,
-                        &material_map,
-                        primitive,
-                        vertices,
-                        indices,
-                    );
-                } else {
-                    info!("No mesh found for primitive {}", primitive.name);
-                }
+                spawn_primitive(
+                    &mut commands,
+                    &mut meshes,
+                    &material_map,
+                    primitive,
+                    &table.vpx,
+                );
             }
             GameItemEnum::Light(light) => {
-                let color = Color::srgb_u8(light.color.r, light.color.g, light.color.b);
-                let position = Vec3::new(
-                    vpu_to_m(light.center.x),
-                    vpu_to_m(light.height.unwrap_or(0.0)),
-                    vpu_to_m(light.center.y),
-                );
-                let transform = Transform::from_translation(position);
-                commands.spawn((
-                    PointLight {
-                        shadows_enabled: false,
-                        range: vpu_to_m(light.falloff_radius),
-                        intensity: light.intensity,
-                        color,
-                        ..default()
-                    },
-                    transform,
-                ));
+                spawn_light(&mut commands, light);
             }
             GameItemEnum::Wall(wall) => spawn_wall(wall),
             _other => {}
         }
     }
-
-    spawn_overhead_lights(&mut commands, table);
 }
 
+fn spawn_light(commands: &mut Commands, light: &Light) {
+    info!("Spawning light: {}", light.name);
+    let color = Color::srgb_u8(light.color.r, light.color.g, light.color.b);
+    let position = Vec3::new(
+        vpu_to_m(light.center.x),
+        vpu_to_m(light.height.unwrap_or(0.0)),
+        vpu_to_m(light.center.y),
+    );
+    // TODO why do light sometimes have a .looking_at(Vec3::ZERO, Dir3::Y) on the transform?
+    let transform = Transform::from_translation(position);
+
+    // Some lights have a mesh, like the lights near the slingshots
+    // TODO can we show these kinds of lights in bevy?
+
+    let visibility = match light.visible {
+        Some(false) => Visibility::Hidden,
+        _ => Visibility::Visible,
+    };
+
+    commands.spawn((
+        Name::new(light.name.to_string()),
+        PointLight {
+            // FIXME enabling shadows slows down the rendering
+            shadows_enabled: true,
+
+            shadow_depth_bias: 0.0,
+            range: vpu_to_m(light.falloff_radius),
+            intensity: light.intensity,
+            color,
+            ..default()
+        },
+        visibility,
+        transform,
+    ));
+}
+
+/// Chrome ball at the center of the table (1.0625 inches standard pinball size)
+/// default vpinball ball diameter is 50 VPU
 fn spawn_ball(
     mem_dir: ResMut<MemoryDir>,
     asset_server: Res<AssetServer>,
@@ -241,8 +331,9 @@ fn spawn_ball(
     mut meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
     table: &Res<TableResource>,
-    table_center: Vec3,
 ) {
+    let table_center = Vec3::new(table.table_width_m / 2.0, table.table_height_m / 2.0, 0.0);
+
     // TODO find out what the difference between ball_image and ball_image_front is
     //   and what the audit about old ball image is.
     // This image is probably static if spherical map is disabled
@@ -287,7 +378,7 @@ fn spawn_ball(
 
     let ball_radius_m = vpu_to_m(50.0 / 2.0);
     commands.spawn((
-        Name("ChromeBall".to_string()),
+        Name::new("ChromeBall".to_string()),
         Mesh3d(meshes.add(Sphere::new(ball_radius_m))),
         MeshMaterial3d(chrome_material),
         Transform::from_xyz(table_center.x, ball_radius_m, table_center.y),
@@ -296,7 +387,7 @@ fn spawn_ball(
 
 /// Draws a 2x2 reference plane in the X-Z plane but 1mm below the table to avoid z-fighting
 /// TODO make this a gizmo reference grid
-fn draw_reference_plane(
+fn spawn_reference_plane(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     materials: &mut ResMut<Assets<StandardMaterial>>,
@@ -314,7 +405,7 @@ fn draw_reference_plane(
         ..default()
     });
     commands.spawn((
-        Name("ReferenceGrid".to_string()),
+        Name::new("ReferenceGrid".to_string()),
         Mesh3d(reference_plane),
         MeshMaterial3d(grid_material),
         Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
@@ -349,12 +440,17 @@ fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableResource>) {
 
     let overhead_lights_height = vpu_to_m(table.vpx.gamedata.light_height);
     // TODO what units are these? vpu_to_m(table.vpx.gamedata.light_range)
-    let overhead_lights_range = overhead_lights_height + 0.5;
+    let overhead_lights_range = overhead_lights_height + 2.0;
     // In lumens
-    let overhead_lights_intensity = 20_000.0;
+    let overhead_lights_intensity = 50_000.0;
     info!(
         "Placing 2 overhead lights at height {:?}m and range {}m",
         overhead_lights_height, overhead_lights_range
+    );
+    let color = Color::srgb_u8(
+        table.vpx.gamedata.light_ambient.r,
+        table.vpx.gamedata.light_ambient.g,
+        table.vpx.gamedata.light_ambient.b,
     );
 
     let overhead_light_1_pos = Vec3::new(
@@ -363,13 +459,17 @@ fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableResource>) {
         vpu_to_m(table.vpx.gamedata.bottom * (1.0 / 3.0)),
     );
     commands.spawn((
+        Name::new("Overhead light back".to_string()),
         PointLight {
+            color,
             shadows_enabled: true,
+            // without this we have no shadows for small objects
+            shadow_depth_bias: 0.0,
             range: overhead_lights_range,
             intensity: overhead_lights_intensity,
             ..default()
         },
-        Transform::from_translation(overhead_light_1_pos),
+        Transform::from_translation(overhead_light_1_pos), //.looking_at(Vec3::ZERO, Dir3::Y),
     ));
 
     let overhead_light_2_pos = Vec3::new(
@@ -378,8 +478,11 @@ fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableResource>) {
         vpu_to_m(table.vpx.gamedata.bottom * (2.0 / 3.0)),
     );
     commands.spawn((
+        Name::new("Overhead light front".to_string()),
         PointLight {
             shadows_enabled: true,
+            // without this we have no shadows for small objects
+            shadow_depth_bias: 0.0,
             range: overhead_lights_range,
             intensity: overhead_lights_intensity,
             ..default()
@@ -414,7 +517,10 @@ fn create_materials(
                 MaterialType::Basic => 0.0,
                 MaterialType::Unknown => 0.0,
             };
-            info!("roughness: {:?}", material.roughness);
+            info!("  roughness: {:?}", material.roughness);
+            info!("  base color: {:?}", material.base_color);
+            info!("  metallic: {:?}", metallic);
+            info!("  thickness: {:?}", material.thickness);
             // TODO enable pbr_multi_layer_material_textures feature and set clear coat
             let material_handle = materials.add(StandardMaterial {
                 base_color,
@@ -444,109 +550,141 @@ fn spawn_wall(_wall: &Wall) {
     // https://bevyengine.org/examples/3d-rendering/generate-custom-mesh/
 }
 
+/// Primitives are stored with inverted z axis
 fn spawn_primitive(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
     material_map: &HashMap<String, Handle<StandardMaterial>>,
     primitive: &Primitive,
-    vertices: Vec<([u8; 32], Vertex3dNoTex2)>,
-    indices: Vec<i64>,
+    table: &VPX,
 ) {
     info!("Spawning primitive {}", primitive.name);
-
-    let mut bevy_mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-
-    let positions: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.x, v.z, v.y]).collect();
-    bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-
-    let normals: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.nx, v.nz, v.ny]).collect();
-    bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-
-    let uvs: Vec<[f32; 2]> = vertices.iter().map(|(_, v)| [v.tu, v.tv]).collect();
-    bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-
-    let indices: Vec<u32> = indices.iter().map(|i| *i as u32).collect();
-    bevy_mesh.insert_indices(Indices::U32(indices));
-
-    let position = primitive.position;
-    let [
-        rot_x,
-        rot_y,
-        rot_z,
-        tra_x,
-        tra_y,
-        tra_z,
-        obj_rot_x,
-        obj_rot_y,
-        obj_rot_z,
-    ] = primitive.rot_and_tra;
-
-    // info!(
-    //     "  Size: {:?}, {:?}, {:?}",
-    //     primitive.size.x, primitive.size.y, primitive.size.z
-    // );
-    // info!(
-    //     "  position: {:?}, {:?}, {:?}",
-    //     position.x, position.y, position.z
-    // );
-    // info!("  rot: {:?}, {:?}, {:?}", rot_x, rot_y, rot_z);
-    // info!("  tra: {:?}, {:?}, {:?}", tra_x, tra_y, tra_z);
-    // info!(
-    //     "  obj_rot: {:?}, {:?}, {:?}",
-    //     obj_rot_x, obj_rot_y, obj_rot_z
-    // );
-
-    // scale to visual pinball units to meters
-    bevy_mesh.scale_by(Vec3::new(vpu_to_m(1.0), vpu_to_m(1.0), vpu_to_m(1.0)));
-
-    // apply the object rotation to the mesh
-    bevy_mesh.rotate_by(
-        Quat::from_rotation_x(obj_rot_x.to_radians())
-            * Quat::from_rotation_y(obj_rot_y.to_radians())
-            * Quat::from_rotation_z(obj_rot_z.to_radians()),
-    );
-
-    // apply user-defined scale to the mesh
-    bevy_mesh.scale_by(Vec3::new(
-        primitive.size.x,
-        primitive.size.y,
-        primitive.size.z,
-    ));
-
-    // apply world rotation to the mesh
-    let rotation_transform = Transform::from_rotation(
-        Quat::from_rotation_x(rot_x.to_radians())
-            * Quat::from_rotation_y(rot_y.to_radians())
-            * Quat::from_rotation_z(rot_z.to_radians()),
-    );
-
-    // apply world translation to the mesh
-    let translation_transform = Transform::from_translation(Vec3::new(
-        vpu_to_m(position.x),
-        vpu_to_m(position.y),
-        vpu_to_m(-position.z),
-    ));
-
-    let transform = translation_transform * rotation_transform;
-
-    let material_name = &primitive.material;
-    // TODO look up the material
-
-    let material_handle = material_map.get(material_name).unwrap_or_else(|| {
-        warn!(
-            "Material for primitive {} not found: {}",
-            primitive.name, material_name
+    let mesh = primitive.read_mesh().unwrap();
+    if let Some(ReadMesh { vertices, indices }) = mesh {
+        let mut bevy_mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::RENDER_WORLD,
         );
-        &material_map["default"]
-    });
 
-    commands.spawn((
-        Name(primitive.name.to_string()),
-        Mesh3d(meshes.add(bevy_mesh)),
-        MeshMaterial3d(material_handle.clone()),
-        transform,
-    ));
+        let positions: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.x, -v.z, v.y]).collect();
+        bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+
+        let normals: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.nx, -v.nz, v.ny]).collect();
+        bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+
+        let uvs: Vec<[f32; 2]> = vertices.iter().map(|(_, v)| [v.tu, v.tv]).collect();
+        bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+
+        let indices: Vec<u32> = indices.iter().map(|i| *i as u32).collect();
+        bevy_mesh.insert_indices(Indices::U32(indices));
+
+        let position = primitive.position;
+        let [
+            rot_x,
+            rot_y,
+            rot_z,
+            tra_x,
+            tra_y,
+            tra_z,
+            obj_rot_x,
+            obj_rot_y,
+            obj_rot_z,
+        ] = primitive.rot_and_tra;
+
+        // info!(
+        //     "  Size: {:?}, {:?}, {:?}",
+        //     primitive.size.x, primitive.size.y, primitive.size.z
+        // );
+        // info!(
+        //     "  position: {:?}, {:?}, {:?}",
+        //     position.x, position.y, position.z
+        // );
+        info!("  rot: {:?}, {:?}, {:?}", rot_x, rot_y, rot_z);
+        // info!("  tra: {:?}, {:?}, {:?}", tra_x, tra_y, tra_z);
+        info!(
+            "  obj_rot: {:?}, {:?}, {:?}",
+            obj_rot_x, obj_rot_y, obj_rot_z
+        );
+
+        // scale to visual pinball units to meters
+        bevy_mesh.scale_by(Vec3::new(vpu_to_m(1.0), vpu_to_m(1.0), vpu_to_m(1.0)));
+
+        // apply the object rotation to the mesh
+        bevy_mesh.rotate_by(
+            Quat::from_rotation_x(-obj_rot_x.to_radians())
+                * Quat::from_rotation_y(-obj_rot_z.to_radians())
+                * Quat::from_rotation_z(obj_rot_y.to_radians()),
+        );
+
+        // apply user-defined scale to the mesh
+        bevy_mesh.scale_by(Vec3::new(
+            primitive.size.x,
+            primitive.size.z,
+            primitive.size.y,
+        ));
+
+        // apply world rotation to the mesh
+        let rotation_transform = Transform::from_rotation(
+            Quat::from_rotation_x(-rot_x.to_radians())
+                * Quat::from_rotation_y(-rot_z.to_radians())
+                * Quat::from_rotation_z(rot_y.to_radians()),
+        );
+
+        // apply world translation to the mesh
+        let translation_transform = Transform::from_translation(Vec3::new(
+            vpu_to_m(position.x),
+            vpu_to_m(position.z),
+            vpu_to_m(position.y),
+        ));
+
+        let transform = translation_transform * rotation_transform;
+
+        let material_handle = if primitive.name == "playfield_mesh" {
+            if !primitive.material.is_empty() {
+                warn!(
+                    "Expected empty primitive material for playfield_mesh but got {}",
+                    primitive.material
+                );
+            }
+            if table.gamedata.playfield_material.is_empty() {
+                warn!("Gamedata playfield material is empty");
+            }
+            // get the material from the table
+            info!("Playfield material: {}", &table.gamedata.playfield_material);
+            &material_map[&table.gamedata.playfield_material]
+        } else {
+            let material_name = &primitive.material;
+            // TODO look up the material
+            if material_name.is_empty() {
+                warn!(
+                    "Material name is empty for primitive {}, using default material",
+                    primitive.name
+                );
+                &material_map["default"]
+            } else {
+                material_map.get(material_name).unwrap_or_else(|| {
+                    warn!(
+                        "Material for primitive {} not found: {}. Using default material",
+                        primitive.name, material_name
+                    );
+                    &material_map["default"]
+                })
+            }
+        };
+
+        let visibility = match primitive.is_visible {
+            true => Visibility::Visible,
+            false => Visibility::Hidden,
+        };
+
+        commands.spawn((
+            Name::new(primitive.name.to_string()),
+            Mesh3d(meshes.add(bevy_mesh)),
+            MeshMaterial3d(material_handle.clone()),
+            transform,
+            visibility, //Wireframe,
+        ));
+    } else {
+        info!("No mesh found for primitive {}", primitive.name);
+    }
 }
