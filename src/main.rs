@@ -1,8 +1,17 @@
 mod camera;
 mod gizmos;
 
+mod ball;
+mod lights;
+mod picking;
+mod triangulate;
+
+use crate::ball::spawn_ball;
 use crate::camera::RotatingCameraPlugin;
 use crate::gizmos::ControlGizmoPlugin;
+use crate::lights::{spawn_light, spawn_overhead_lights};
+use crate::picking::on_click_print_name;
+use crate::triangulate::{ensure_ccw_winding, triangulate_polygon};
 use bevy::asset::RenderAssetUsages;
 use bevy::asset::io::memory::{Dir, MemoryAssetReader};
 use bevy::asset::io::{AssetSource, AssetSourceId};
@@ -15,6 +24,7 @@ use bevy::render::RenderPlugin;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::settings::{RenderCreation, WgpuFeatures, WgpuSettings};
 use bevy::render::view::NoFrustumCulling;
+use bevy_inspector_egui::bevy_egui::EguiPlugin;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use std::collections::HashMap;
 use std::env;
@@ -45,9 +55,9 @@ impl TableResource {
     }
 }
 
-pub struct HelloPlugin;
+pub struct MainPlugin;
 
-impl Plugin for HelloPlugin {
+impl Plugin for MainPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, load_table);
         app.add_systems(Startup, setup);
@@ -119,20 +129,22 @@ fn main() -> ExitCode {
             // and a scene lighting scale? (daynight?)
             brightness: 1.0,
             //affects_lightmapped_meshes: true,
+            ..default()
         })
         // Increase the shadow map resolution
         // .insert_resource(DirectionalLightShadowMap { size: 4096 })
         // .insert_resource(PointLightShadowMap { size: 4096 })
         .add_plugins((
             DefaultPlugins
-                .set(RenderPlugin {
-                    render_creation: RenderCreation::Automatic(WgpuSettings {
-                        // WARN this is a native only feature. It will not work with webgl or webgpu
-                        features: WgpuFeatures::POLYGON_MODE_LINE,
-                        ..default()
-                    }),
-                    ..default()
-                })
+                // // This plugin is needed to enable the wireframe rendering
+                // .set(RenderPlugin {
+                //     render_creation: RenderCreation::Automatic(WgpuSettings {
+                //         // WARN this is a native only feature. It will not work with webgl or webgpu
+                //         features: WgpuFeatures::POLYGON_MODE_LINE,
+                //         ..default()
+                //     }),
+                //     ..default()
+                // })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
                         title: format!(
@@ -144,25 +156,28 @@ fn main() -> ExitCode {
                     ..default()
                 }),
             // You need to add this plugin to enable wireframe rendering
-            WireframePlugin,
+            //WireframePlugin,
         ))
         // Wireframes can be configured with this resource. This can be changed at runtime.
-        .insert_resource(WireframeConfig {
-            // The global wireframe config enables drawing of wireframes on every mesh,
-            // except those with `NoWireframe`. Meshes with `Wireframe` will always have a wireframe,
-            // regardless of the global configuration.
-            // FIXME when setting this to true our meshes are not rendered
-            //   same when adding the Wireframe component to the mesh
-            global: false,
-            // Controls the default color of all wireframes. Used as the default color for global wireframes.
-            // Can be changed per mesh using the `WireframeColor` component.
-            default_color: WHITE.into(),
-        })
-        .add_plugins(HelloPlugin)
+        // .insert_resource(WireframeConfig {
+        //     // The global wireframe config enables drawing of wireframes on every mesh,
+        //     // except those with `NoWireframe`. Meshes with `Wireframe` will always have a wireframe,
+        //     // regardless of the global configuration.
+        //     // FIXME when setting this to true our meshes are not rendered
+        //     //   same when adding the Wireframe component to the mesh
+        //     global: false,
+        //     // Controls the default color of all wireframes. Used as the default color for global wireframes.
+        //     // Can be changed per mesh using the `WireframeColor` component.
+        //     default_color: WHITE.into(),
+        // })
+        .add_plugins(MainPlugin)
         .add_plugins(RotatingCameraPlugin)
         .add_plugins(ControlGizmoPlugin)
-        .add_plugins(WorldInspectorPlugin::new())
-        .add_systems(Startup, setup_gizmo_config)
+        .add_plugins(EguiPlugin {
+            enable_multipass_for_primary_context: true,
+        })
+        .add_plugins(WorldInspectorPlugin::default())
+        .add_plugins(MeshPickingPlugin)
         .run();
     match app_exit {
         AppExit::Success => ExitCode::SUCCESS,
@@ -171,13 +186,6 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
-}
-
-fn setup_gizmo_config(mut gizmo_config_store: ResMut<GizmoConfigStore>) {
-    gizmo_config_store
-        .config_mut::<LightGizmoConfigGroup>()
-        .1
-        .draw_all = true;
 }
 
 fn load_table(mut commands: Commands, table: Res<TableResource>) {
@@ -308,183 +316,6 @@ fn spawn_game_items(
             _other => {}
         }
     }
-}
-
-fn spawn_light(commands: &mut Commands, light: &Light) {
-    info!("Spawning light: {}", light.name);
-    let color = Color::srgb_u8(light.color.r, light.color.g, light.color.b);
-    let position = Vec3::new(
-        vpu_to_m(light.center.x),
-        vpu_to_m(light.height.unwrap_or(0.0)),
-        vpu_to_m(light.center.y),
-    );
-    // TODO why do light sometimes have a .looking_at(Vec3::ZERO, Dir3::Y) on the transform?
-    let transform = Transform::from_translation(position);
-
-    // Some lights have a mesh, like the lights near the slingshots
-    // TODO can we show these kinds of lights in bevy?
-
-    let visibility = match light.visible {
-        Some(false) => Visibility::Hidden,
-        _ => Visibility::Visible,
-    };
-
-    commands.spawn((
-        Name::new(light.name.to_string()),
-        PointLight {
-            // FIXME enabling shadows slows down the rendering
-            // shadows_enabled: true,
-            // shadow_depth_bias: 0.0,
-            range: vpu_to_m(light.falloff_radius),
-            intensity: light.intensity,
-            color,
-            ..default()
-        },
-        visibility,
-        transform,
-    ));
-}
-
-/// Chrome ball at the center of the table (1.0625 inches standard pinball size)
-/// default vpinball ball diameter is 50 VPU
-fn spawn_ball(
-    mem_dir: ResMut<MemoryDir>,
-    asset_server: Res<AssetServer>,
-    commands: &mut Commands,
-    mut meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    table: &Res<TableResource>,
-) {
-    let table_center = Vec3::new(table.table_width_m / 2.0, table.table_height_m / 2.0, 0.0);
-
-    // TODO find out what the difference between ball_image and ball_image_front is
-    //   and what the audit about old ball image is.
-    // This image is probably static if spherical map is disabled
-    // On the table I tested it was just an environment map
-    //let ball_image_name = &table.vpx.gamedata.ball_image;
-    let ball_image_name = &table.vpx.gamedata.ball_image_front;
-
-    let mut ball_image_handle: Option<Handle<Image>> = None;
-    for image in &table.vpx.images {
-        if image.name == *ball_image_name {
-            info!("Ball image found: {:?}", image.name);
-            // TODO load the ball texture
-            // TODO apply the ball texture to the ball material
-            if let Some(jpg) = &image.jpeg {
-                // use the image data to create a texture
-
-                let file_name = format!("{}.{}", image.name, image.ext());
-                mem_dir
-                    .dir
-                    .insert_asset(Path::new(&file_name), jpg.data.to_owned());
-
-                info!("Ball texture: {:?}", file_name);
-                ball_image_handle = Some(asset_server.load(format!("memory://{}", file_name)));
-
-                // TODO https://github.com/bevyengine/bevy/discussions/13602#discussioncomment-12089441
-                // TODO https://www.reddit.com/r/bevy/comments/1i83wv5/tutorial_how_to_load_inmemory_assets_in_bevy/
-            } else {
-                info!("No image data found for ball image");
-            }
-        }
-    }
-
-    let chrome_material = materials.add(StandardMaterial {
-        //base_color: Color::srgb(0.8, 0.8, 0.8),
-        base_color: Color::WHITE,
-        metallic: 1.0,
-        perceptual_roughness: 0.05,
-        reflectance: 0.9,
-        base_color_texture: ball_image_handle,
-        ..default()
-    });
-
-    let ball_radius_m = vpu_to_m(50.0 / 2.0);
-    commands.spawn((
-        Name::new("ChromeBall".to_string()),
-        Mesh3d(meshes.add(Sphere::new(ball_radius_m))),
-        MeshMaterial3d(chrome_material),
-        Transform::from_xyz(table_center.x, ball_radius_m, table_center.y),
-    ));
-}
-
-fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableResource>) {
-    // Visual Pinball defines two overhead lights positioned at 1/3 and 2/3 of the table length
-
-    // 2 overhead lights with power, height, color and range
-    //    m_table->m_Light[0].pos.x = m_table->m_right * 0.5f;
-    //    m_table->m_Light[1].pos.x = m_table->m_right * 0.5f;
-    //    m_table->m_Light[0].pos.y = m_table->m_bottom * (float)(1.0 / 3.0);
-    //    m_table->m_Light[1].pos.y = m_table->m_bottom * (float)(2.0 / 3.0);
-    //    m_table->m_Light[0].pos.z = m_table->m_lightHeight;
-    //    m_table->m_Light[1].pos.z = m_table->m_lightHeight;
-    //
-    // LZDI
-    //    vec4 emission = convertColor(m_table->m_Light[0].emission, 1.f);
-    //    emission.x *= m_table->m_lightEmissionScale * m_globalEmissionScale;
-    //    emission.y *= m_table->m_lightEmissionScale * m_globalEmissionScale;
-    //    emission.z *= m_table->m_lightEmissionScale * m_globalEmissionScale;
-    // LZRA
-    //   range
-
-    //       PropRGB("Light Em. Color", m_table, is_live, &(m_table->m_Light[0].emission), m_live_table ? &(m_live_table->m_Light[0].emission) : nullptr);
-    //       PropFloat("Light Em. Scale", m_table, is_live, &(m_table->m_lightEmissionScale), m_live_table ? &(m_live_table->m_lightEmissionScale) : nullptr, 20000.0f, 100000.0f, "%.0f", ImGuiInputTextFlags_CharsDecimal, reinit_lights);
-    //       PropFloat("Light Height", m_table, is_live, &(m_table->m_lightHeight), m_live_table ? &(m_live_table->m_lightHeight) : nullptr, 20.0f, 100.0f, "%.0f");
-    //       PropFloat("Light Range", m_table, is_live, &(m_table->m_lightRange), m_live_table ? &(m_live_table->m_lightRange) : nullptr, 200.0f, 1000.0f, "%.0f");
-    //
-
-    let overhead_lights_height = vpu_to_m(table.vpx.gamedata.light_height);
-    // TODO what units are these? vpu_to_m(table.vpx.gamedata.light_range)
-    let overhead_lights_range = overhead_lights_height + 2.0;
-    // In lumens
-    let overhead_lights_intensity = 50_000.0;
-    info!(
-        "Placing 2 overhead lights at height {:?}m and range {}m",
-        overhead_lights_height, overhead_lights_range
-    );
-    let color = Color::srgb_u8(
-        table.vpx.gamedata.light_ambient.r,
-        table.vpx.gamedata.light_ambient.g,
-        table.vpx.gamedata.light_ambient.b,
-    );
-
-    let overhead_light_1_pos = Vec3::new(
-        vpu_to_m(table.vpx.gamedata.right * 0.5),
-        overhead_lights_height,
-        vpu_to_m(table.vpx.gamedata.bottom * (1.0 / 3.0)),
-    );
-    commands.spawn((
-        Name::new("Overhead light back".to_string()),
-        PointLight {
-            color,
-            shadows_enabled: true,
-            // without this we have no shadows for small objects
-            shadow_depth_bias: 0.0,
-            range: overhead_lights_range,
-            intensity: overhead_lights_intensity,
-            ..default()
-        },
-        Transform::from_translation(overhead_light_1_pos), //.looking_at(Vec3::ZERO, Dir3::Y),
-    ));
-
-    let overhead_light_2_pos = Vec3::new(
-        vpu_to_m(table.vpx.gamedata.right * 0.5),
-        overhead_lights_height,
-        vpu_to_m(table.vpx.gamedata.bottom * (2.0 / 3.0)),
-    );
-    commands.spawn((
-        Name::new("Overhead light front".to_string()),
-        PointLight {
-            color,
-            shadows_enabled: true,
-            // without this we have no shadows for small objects
-            shadow_depth_bias: 0.0,
-            range: overhead_lights_range,
-            intensity: overhead_lights_intensity,
-            ..default()
-        },
-        Transform::from_translation(overhead_light_2_pos),
-    ));
 }
 
 fn create_materials(
@@ -631,16 +462,47 @@ fn spawn_wall(
 
     let mesh_handle = meshes.add(mesh);
 
-    commands.spawn((
-        Name::new(format!("Wall_{}", wall.name)),
-        Mesh3d(mesh_handle),
-        MeshMaterial3d(material_handle.clone()),
-        Transform::default(),
-        NoFrustumCulling,
-    ));
+    commands
+        .spawn((
+            Name::new(format!("Wall_{}", wall.name)),
+            Mesh3d(mesh_handle),
+            MeshMaterial3d(material_handle.clone()),
+            Transform::default(),
+            NoFrustumCulling,
+        ))
+        .observe(on_click_print_name);
 }
 
-/// Primitives are stored with inverted z axis
+/// Spawns a 3D primitive in the Bevy engine using the provided data.
+///
+/// This function creates a Bevy-compatible mesh object from the given primitive data (e.g., mesh
+/// vertices, normals, UV coordinates, indices), applies the appropriate transformations and
+/// scaling based on its attributes, associates a material with the mesh, and spawns it in the ECS
+/// (Entity Component System) world. This is intended for use within a custom visual pinball game
+/// development environment.
+///
+/// # Parameters
+/// - `commands`: A mutable reference to the Bevy `Commands` object for spawning entities.
+/// - `meshes`: A mutable reference to Bevy's `Assets<Mesh>` for storing and managing mesh assets.
+/// - `material_map`: A reference to a `HashMap` mapping material names to their material handles.
+/// - `primitive`: A reference to the primitive to be spawned, which contains metadata like mesh
+///                geometry, size, rotation, position, and material.
+/// - `table`: A reference to the `VPX` structure associated with the current table, used to
+///            retrieve additional metadata such as playfield material.
+///
+/// # Details
+/// - Reads mesh data from the `primitive`, including vertices and indices.
+/// - Converts raw geometry into a Bevy `Mesh` by:
+///     - Mapping positions, normals, and texture coordinates (UVs) to Bevy's attributes.
+///     - Converting vertex and index formats to Bevy-compatible formats.
+/// - Applies scaling to convert visual pinball units (VPU) to meters.
+/// - Applies rotation and translation transformations (object-level and world space).
+/// - Retrieves the appropriate material from the `material_map`:
+///     - Uses the material defined in `primitive.material` (if present).
+///     - For the `playfield_mesh`, retrieves the material from the `table`'s playfield metadata.
+///     - Falls back to a default material if the material is not found or is empty.
+/// - Sets the visibility based on the `primitive.is_visible` property.
+/// - Spawns the
 fn spawn_primitive(
     commands: &mut Commands,
     meshes: &mut ResMut<Assets<Mesh>>,
@@ -649,8 +511,54 @@ fn spawn_primitive(
     table: &VPX,
 ) {
     info!("Spawning primitive {}", primitive.name);
+
+    let material_handle = if primitive.name == "playfield_mesh" {
+        if !primitive.material.is_empty() {
+            warn!(
+                "Expected empty primitive material for playfield_mesh but got {}",
+                primitive.material
+            );
+        }
+        if table.gamedata.playfield_material.is_empty() {
+            warn!("Gamedata playfield material is empty");
+        }
+        // get the material from the table
+        info!("Playfield material: {}", &table.gamedata.playfield_material);
+        &material_map[&table.gamedata.playfield_material]
+    } else {
+        let material_name = &primitive.material;
+        // TODO look up the material
+        if material_name.is_empty() {
+            warn!(
+                "Material name is empty for primitive {}, using default material",
+                primitive.name
+            );
+            &material_map["default"]
+        } else {
+            material_map.get(material_name).unwrap_or_else(|| {
+                warn!(
+                    "Material for primitive {} not found: {}. Using default material",
+                    primitive.name, material_name
+                );
+                &material_map["default"]
+            })
+        }
+    };
+
+    let [
+        rot_x,
+        rot_y,
+        rot_z,
+        tra_x,
+        tra_y,
+        tra_z,
+        obj_rot_x,
+        obj_rot_y,
+        obj_rot_z,
+    ] = primitive.rot_and_tra;
+
     let mesh = primitive.read_mesh().unwrap();
-    if let Some(ReadMesh { vertices, indices }) = mesh {
+    let bevy_mesh = if let Some(ReadMesh { vertices, indices }) = mesh {
         let mut bevy_mesh = Mesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::RENDER_WORLD,
@@ -668,7 +576,6 @@ fn spawn_primitive(
         let indices: Vec<u32> = indices.iter().map(|i| *i as u32).collect();
         bevy_mesh.insert_indices(Indices::U32(indices));
 
-        let position = primitive.position;
         let [
             rot_x,
             rot_y,
@@ -689,7 +596,7 @@ fn spawn_primitive(
         //     "  position: {:?}, {:?}, {:?}",
         //     position.x, position.y, position.z
         // );
-        info!("  rot: {:?}, {:?}, {:?}", rot_x, rot_y, rot_z);
+
         // info!("  tra: {:?}, {:?}, {:?}", tra_x, tra_y, tra_z);
         info!(
             "  obj_rot: {:?}, {:?}, {:?}",
@@ -713,199 +620,54 @@ fn spawn_primitive(
             primitive.size.y,
         ));
 
-        // apply world rotation to the mesh
-        let rotation_transform = Transform::from_rotation(
-            Quat::from_rotation_x(-rot_x.to_radians())
-                * Quat::from_rotation_y(-rot_z.to_radians())
-                * Quat::from_rotation_z(rot_y.to_radians()),
-        );
+        bevy_mesh
+    } else {
+        // TODO there is a property that indicates there is no mesh
+        //  in that case it's a cylinder
+        //  the number of sides indicates how many segments the circle has
 
-        // apply world translation to the mesh
-        let translation_transform = Transform::from_translation(Vec3::new(
-            vpu_to_m(position.x),
-            vpu_to_m(position.z),
-            vpu_to_m(position.y),
-        ));
-
-        let transform = translation_transform * rotation_transform;
-
-        let material_handle = if primitive.name == "playfield_mesh" {
-            if !primitive.material.is_empty() {
-                warn!(
-                    "Expected empty primitive material for playfield_mesh but got {}",
-                    primitive.material
-                );
-            }
-            if table.gamedata.playfield_material.is_empty() {
-                warn!("Gamedata playfield material is empty");
-            }
-            // get the material from the table
-            info!("Playfield material: {}", &table.gamedata.playfield_material);
-            &material_map[&table.gamedata.playfield_material]
-        } else {
-            let material_name = &primitive.material;
-            // TODO look up the material
-            if material_name.is_empty() {
-                warn!(
-                    "Material name is empty for primitive {}, using default material",
-                    primitive.name
-                );
-                &material_map["default"]
-            } else {
-                material_map.get(material_name).unwrap_or_else(|| {
-                    warn!(
-                        "Material for primitive {} not found: {}. Using default material",
-                        primitive.name, material_name
-                    );
-                    &material_map["default"]
-                })
-            }
+        // we need to create a cylinder
+        // TODO how do we control the number of faces?
+        // TODO how do we fix the size correctly?
+        let cylinder = Cylinder {
+            radius: 0.01,
+            half_height: 0.1,
         };
+        //let cylinder = Extrusion::new(Circle { radius: 0.01 }, 0.1);
+        cylinder.into()
+    };
 
-        let visibility = match primitive.is_visible {
-            true => Visibility::Visible,
-            false => Visibility::Hidden,
-        };
+    // apply world rotation to the mesh
+    info!("  rot: {:?}, {:?}, {:?}", rot_x, rot_y, rot_z);
+    let rotation_transform = Transform::from_rotation(
+        Quat::from_rotation_x(-rot_x.to_radians())
+            * Quat::from_rotation_y(-rot_z.to_radians())
+            * Quat::from_rotation_z(rot_y.to_radians()),
+    );
 
-        commands.spawn((
+    let position = primitive.position;
+
+    // apply world translation to the mesh
+    let translation_transform = Transform::from_translation(Vec3::new(
+        vpu_to_m(position.x),
+        vpu_to_m(position.z),
+        vpu_to_m(position.y),
+    ));
+
+    let transform = translation_transform * rotation_transform;
+
+    let visibility = match primitive.is_visible {
+        true => Visibility::Visible,
+        false => Visibility::Hidden,
+    };
+
+    commands
+        .spawn((
             Name::new(primitive.name.to_string()),
             Mesh3d(meshes.add(bevy_mesh)),
             MeshMaterial3d(material_handle.clone()),
             transform,
             visibility, //Wireframe,
-        ));
-    } else {
-        info!("No mesh found for primitive {}", primitive.name);
-    }
-}
-
-/// Determines if the points are in the correct winding order (counterclockwise)
-/// and reverses them if not.
-fn ensure_ccw_winding(drag_points: &mut Vec<DragPoint>) -> bool {
-    if drag_points.len() < 3 {
-        return false; // Not enough points to form a proper polygon
-    }
-
-    // Calculate the signed area of the polygon
-    // Positive area means counterclockwise winding
-    // Negative area means clockwise winding
-    let mut signed_area = 0.0;
-
-    for i in 0..drag_points.len() {
-        let j = (i + 1) % drag_points.len();
-        signed_area +=
-            (drag_points[i].x * drag_points[j].y) - (drag_points[j].x * drag_points[i].y);
-    }
-
-    // If signed area is negative, we have clockwise winding
-    // We need to reverse the points to get counterclockwise winding
-    if signed_area < 0.0 {
-        drag_points.reverse();
-        return true; // Points were reversed
-    }
-
-    false // Points were already in correct order
-}
-
-fn triangulate_polygon(vertices: &[Vec2]) -> Vec<usize> {
-    if vertices.len() < 3 {
-        return vec![];
-    }
-
-    // Initialize the list of indices
-    let mut indices = Vec::new();
-
-    // Create a mutable array of available vertices
-    let mut remaining: Vec<usize> = (0..vertices.len()).collect();
-
-    // Continue until we've used all vertices except the last 2
-    let mut attempts = 0;
-    let max_attempts = vertices.len() * vertices.len(); // Safety limit
-
-    while remaining.len() > 2 && attempts < max_attempts {
-        let n = remaining.len();
-
-        // Find an ear
-        for i in 0..n {
-            let prev = (i + n - 1) % n;
-            let curr = i;
-            let next = (i + 1) % n;
-
-            let prev_idx = remaining[prev];
-            let curr_idx = remaining[curr];
-            let next_idx = remaining[next];
-
-            let p0 = vertices[prev_idx];
-            let p1 = vertices[curr_idx];
-            let p2 = vertices[next_idx];
-
-            // Check if vertex forms an ear (internal angle < 180°)
-            if is_ear(vertices, &remaining, prev, curr, next) {
-                // Add triangle
-                indices.push(prev_idx as u32);
-                indices.push(curr_idx as u32);
-                indices.push(next_idx as u32);
-
-                // Remove the ear tip from remaining vertices
-                remaining.remove(curr);
-                break;
-            }
-        }
-
-        attempts += 1;
-    }
-
-    // Convert to the expected format
-    indices.iter().map(|&i| i as usize).collect()
-}
-
-fn is_ear(vertices: &[Vec2], remaining: &[usize], prev: usize, curr: usize, next: usize) -> bool {
-    let prev_idx = remaining[prev];
-    let curr_idx = remaining[curr];
-    let next_idx = remaining[next];
-
-    let p0 = vertices[prev_idx];
-    let p1 = vertices[curr_idx];
-    let p2 = vertices[next_idx];
-
-    // First, check if this is a convex corner
-    if !is_convex(p0, p1, p2) {
-        return false;
-    }
-
-    // Then check if any remaining vertex is inside this triangle
-    for &i in remaining {
-        if i == prev_idx || i == curr_idx || i == next_idx {
-            continue;
-        }
-
-        if point_in_triangle(vertices[i], p0, p1, p2) {
-            return false;
-        }
-    }
-
-    true
-}
-
-fn is_convex(p0: Vec2, p1: Vec2, p2: Vec2) -> bool {
-    // Calculate the cross product to determine convexity
-    let v1 = Vec2::new(p1.x - p0.x, p1.y - p0.y);
-    let v2 = Vec2::new(p2.x - p1.x, p2.y - p1.y);
-    let cross = v1.x * v2.y - v1.y * v2.x;
-
-    // Positive cross product means counter-clockwise, which is what we want
-    cross > 0.0
-}
-
-fn point_in_triangle(p: Vec2, a: Vec2, b: Vec2, c: Vec2) -> bool {
-    // Barycentric coordinate method
-    let area = 0.5 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y)).abs();
-
-    // Calculate areas of three triangles made by point p and vertices of the triangle
-    let alpha = 0.5 * ((b.y - c.y) * (p.x - c.x) + (c.x - b.x) * (p.y - c.y)) / area;
-    let beta = 0.5 * ((c.y - a.y) * (p.x - c.x) + (a.x - c.x) * (p.y - c.y)) / area;
-    let gamma = 1.0 - alpha - beta;
-
-    // If all coordinates are between 0 and 1, point is inside triangle
-    alpha >= 0.0 && beta >= 0.0 && gamma >= 0.0
+        ))
+        .observe(on_click_print_name);
 }

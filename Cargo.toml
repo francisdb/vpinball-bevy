@@ -4,8 +4,10 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = { version = "0.15.3", features = ["webp"] }
-bevy-inspector-egui = "0.30.0"
+bevy = { version = "0.16.0", features = ["webp"] }
+bevy_picking = { version = "0.16.0" }
+bevy_egui = "0.34.0"
+bevy-inspector-egui = "0.31.0"
 #vpin = "0.17.6"
 vpin = { path = "../vpin" }
 
