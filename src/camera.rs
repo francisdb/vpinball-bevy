@@ -1,5 +1,6 @@
 use crate::TableResource;
 use bevy::app::Plugin;
+use bevy::core_pipeline::bloom::Bloom;
 use bevy::input::mouse::MouseWheel;
 use bevy::math::{Quat, Vec3};
 use bevy::pbr::ShadowFilteringMethod;
@@ -11,7 +12,14 @@ impl Plugin for RotatingCameraPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, spawn_camera_system);
         //app.add_systems(Update, rotate_camera_system);;
-        app.add_systems(Update, (height_camera_system, move_camera_system));
+        app.add_systems(
+            Update,
+            (
+                height_camera_system,
+                move_camera_system,
+                toggle_bloom_system,
+            ),
+        );
     }
 }
 
@@ -52,6 +60,7 @@ fn spawn_camera_system(
             },
             camera_transform,
             ShadowFilteringMethod::Hardware2x2,
+            Bloom::NATURAL,
         ))
         // .insert(Skybox {
         //     brightness: 2000.0,
@@ -160,5 +169,26 @@ fn height_camera_system(
 
         // Ensure camera keeps looking at table center after any movement
         transform.look_at(table_center, Dir3::Y);
+    }
+}
+
+fn toggle_bloom_system(
+    mut query: Query<(Entity, Option<&Bloom>), With<Camera3d>>,
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+) {
+    if keyboard_input.just_pressed(KeyCode::KeyB) {
+        for (entity, mut bloom) in query.iter_mut() {
+            match bloom {
+                Some(_) => {
+                    commands.entity(entity).remove::<Bloom>();
+                    info!("Bloom disabled");
+                }
+                None => {
+                    commands.entity(entity).insert(Bloom::NATURAL);
+                    info!("Bloom enabled");
+                }
+            }
+        }
     }
 }
