@@ -4,24 +4,29 @@ mod gizmos;
 mod ball;
 mod lights;
 mod picking;
+mod primitives;
 mod triangulate;
+mod walls;
 
 use crate::ball::spawn_ball;
 use crate::camera::RotatingCameraPlugin;
 use crate::gizmos::ControlGizmoPlugin;
 use crate::lights::{spawn_light, spawn_overhead_lights};
 use crate::picking::on_click_print_name;
+use crate::primitives::spawn_primitive;
 use crate::triangulate::{ensure_ccw_winding, triangulate_polygon};
+use crate::walls::spawn_wall;
 use bevy::asset::RenderAssetUsages;
 use bevy::asset::io::memory::{Dir, MemoryAssetReader};
 use bevy::asset::io::{AssetSource, AssetSourceId};
 use bevy::color::palettes::basic::WHITE;
 use bevy::core_pipeline::Skybox;
+use bevy::math::bounding::Aabb3d;
 use bevy::pbr::wireframe::{Wireframe, WireframeConfig, WireframePlugin};
 use bevy::pbr::{DirectionalLightShadowMap, PointLightShadowMap};
 use bevy::prelude::*;
 use bevy::render::RenderPlugin;
-use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::mesh::{Indices, MeshAabb, PrimitiveTopology};
 use bevy::render::settings::{RenderCreation, WgpuFeatures, WgpuSettings};
 use bevy::render::view::NoFrustumCulling;
 use bevy_inspector_egui::bevy_egui::EguiPlugin;
@@ -293,6 +298,9 @@ fn spawn_game_items(
     material_map: &HashMap<String, Handle<StandardMaterial>>,
 ) {
     for item in &table.vpx.gameitems {
+        // if item.name() != "playfield_mesh" {
+        //     continue;
+        // }
         match item {
             GameItemEnum::Primitive(primitive) => {
                 spawn_primitive(
@@ -366,308 +374,4 @@ fn create_materials(
     }
 
     material_map
-}
-
-fn spawn_wall(
-    commands: &mut Commands,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    material_map: &HashMap<String, Handle<StandardMaterial>>,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    wall: &Wall,
-) {
-    info!("Spawning wall {}", wall.name);
-
-    // TODO apply CatmullCurve if the dragpoints are set to smooth
-    //   how is that curve then sampled for the mesh?
-
-    // for now we just spawn the top and not the walls. There is no bottom face.
-
-    // A wall defines a polygon in 2D space and a bottom and top height
-    // These are for example used for the plastics on top of the table features
-
-    // https://bevyengine.org/examples/3d-rendering/generate-custom-mesh/
-
-    // wall contains dragpoints. These define a polygon in 2D space
-    // TODO we need to create a mesh from the wall dragpoints
-
-    // first we need to check if the wall.drag_points are in the right order, otherwise we need to reverse them
-
-    // print all drag points
-    for (i, drag_point) in wall.drag_points.iter().enumerate() {
-        info!("  drag point {}: {:?}", i, drag_point);
-    }
-
-    let mut drag_points = wall.drag_points.clone();
-
-    let reversed = ensure_ccw_winding(&mut drag_points);
-    if reversed {
-        info!("  drag points were in clockwise order, reversed");
-    } else {
-        info!("  drag points were in counterclockwise order");
-    }
-
-    // then we need to create a mesh from the dragpoints
-
-    // Create a mesh builder
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
-    );
-
-    let top_height = vpu_to_m(wall.height_top);
-    let bottom_height = vpu_to_m(wall.height_bottom);
-
-    // Generate vertices for top face (all with the same height)
-    let num_points = drag_points.len();
-    let mut positions = Vec::with_capacity(num_points);
-    let mut normals = Vec::with_capacity(num_points);
-    let mut uvs = Vec::with_capacity(num_points);
-
-    for point in &drag_points {
-        // Position (x, top_height, y) -> Bevy uses y-up
-        positions.push([vpu_to_m(point.x), top_height, vpu_to_m(point.y)]);
-
-        // Normal points up for the top face
-        normals.push([0.0, 1.0, 0.0]);
-
-        // Simple UV mapping (could be improved)
-        uvs.push([point.x, point.y]);
-    }
-
-    // Triangulate the polygon using ear clipping (works for any polygon)
-    let positions_2d: Vec<Vec2> = positions
-        .iter()
-        .map(|p| Vec2::new(p[0], p[2])) // Use x,z as 2D coordinates
-        .collect();
-
-    let mut indices = triangulate_polygon(&positions_2d);
-    indices.reverse();
-    info!("  indices: {:?}", indices);
-
-    // Insert attributes
-    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-    mesh.insert_indices(Indices::U32(indices.iter().map(|&i| i as u32).collect()));
-
-    let material_handle = material_map
-        .get(wall.top_material.as_str())
-        .unwrap_or_else(|| {
-            warn!(
-                "Material for wall {} not found: {}. Using default material",
-                wall.name, wall.top_material
-            );
-            &material_map["default"]
-        });
-
-    let mesh_handle = meshes.add(mesh);
-
-    commands
-        .spawn((
-            Name::new(format!("Wall_{}", wall.name)),
-            Mesh3d(mesh_handle),
-            MeshMaterial3d(material_handle.clone()),
-            Transform::default(),
-            NoFrustumCulling,
-        ))
-        .observe(on_click_print_name);
-}
-
-/// Spawns a 3D primitive in the Bevy engine using the provided data.
-///
-/// This function creates a Bevy-compatible mesh object from the given primitive data (e.g., mesh
-/// vertices, normals, UV coordinates, indices), applies the appropriate transformations and
-/// scaling based on its attributes, associates a material with the mesh, and spawns it in the ECS
-/// (Entity Component System) world. This is intended for use within a custom visual pinball game
-/// development environment.
-///
-/// # Parameters
-/// - `commands`: A mutable reference to the Bevy `Commands` object for spawning entities.
-/// - `meshes`: A mutable reference to Bevy's `Assets<Mesh>` for storing and managing mesh assets.
-/// - `material_map`: A reference to a `HashMap` mapping material names to their material handles.
-/// - `primitive`: A reference to the primitive to be spawned, which contains metadata like mesh
-///                geometry, size, rotation, position, and material.
-/// - `table`: A reference to the `VPX` structure associated with the current table, used to
-///            retrieve additional metadata such as playfield material.
-///
-/// # Details
-/// - Reads mesh data from the `primitive`, including vertices and indices.
-/// - Converts raw geometry into a Bevy `Mesh` by:
-///     - Mapping positions, normals, and texture coordinates (UVs) to Bevy's attributes.
-///     - Converting vertex and index formats to Bevy-compatible formats.
-/// - Applies scaling to convert visual pinball units (VPU) to meters.
-/// - Applies rotation and translation transformations (object-level and world space).
-/// - Retrieves the appropriate material from the `material_map`:
-///     - Uses the material defined in `primitive.material` (if present).
-///     - For the `playfield_mesh`, retrieves the material from the `table`'s playfield metadata.
-///     - Falls back to a default material if the material is not found or is empty.
-/// - Sets the visibility based on the `primitive.is_visible` property.
-/// - Spawns the
-fn spawn_primitive(
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    material_map: &HashMap<String, Handle<StandardMaterial>>,
-    primitive: &Primitive,
-    table: &VPX,
-) {
-    info!("Spawning primitive {}", primitive.name);
-
-    let material_handle = if primitive.name == "playfield_mesh" {
-        if !primitive.material.is_empty() {
-            warn!(
-                "Expected empty primitive material for playfield_mesh but got {}",
-                primitive.material
-            );
-        }
-        if table.gamedata.playfield_material.is_empty() {
-            warn!("Gamedata playfield material is empty");
-        }
-        // get the material from the table
-        info!("Playfield material: {}", &table.gamedata.playfield_material);
-        &material_map[&table.gamedata.playfield_material]
-    } else {
-        let material_name = &primitive.material;
-        // TODO look up the material
-        if material_name.is_empty() {
-            warn!(
-                "Material name is empty for primitive {}, using default material",
-                primitive.name
-            );
-            &material_map["default"]
-        } else {
-            material_map.get(material_name).unwrap_or_else(|| {
-                warn!(
-                    "Material for primitive {} not found: {}. Using default material",
-                    primitive.name, material_name
-                );
-                &material_map["default"]
-            })
-        }
-    };
-
-    let [
-        rot_x,
-        rot_y,
-        rot_z,
-        tra_x,
-        tra_y,
-        tra_z,
-        obj_rot_x,
-        obj_rot_y,
-        obj_rot_z,
-    ] = primitive.rot_and_tra;
-
-    let mesh = primitive.read_mesh().unwrap();
-    let bevy_mesh = if let Some(ReadMesh { vertices, indices }) = mesh {
-        let mut bevy_mesh = Mesh::new(
-            PrimitiveTopology::TriangleList,
-            RenderAssetUsages::RENDER_WORLD,
-        );
-
-        let positions: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.x, -v.z, v.y]).collect();
-        bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
-
-        let normals: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.nx, -v.nz, v.ny]).collect();
-        bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
-
-        let uvs: Vec<[f32; 2]> = vertices.iter().map(|(_, v)| [v.tu, v.tv]).collect();
-        bevy_mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
-
-        let indices: Vec<u32> = indices.iter().map(|i| *i as u32).collect();
-        bevy_mesh.insert_indices(Indices::U32(indices));
-
-        let [
-            rot_x,
-            rot_y,
-            rot_z,
-            tra_x,
-            tra_y,
-            tra_z,
-            obj_rot_x,
-            obj_rot_y,
-            obj_rot_z,
-        ] = primitive.rot_and_tra;
-
-        // info!(
-        //     "  Size: {:?}, {:?}, {:?}",
-        //     primitive.size.x, primitive.size.y, primitive.size.z
-        // );
-        // info!(
-        //     "  position: {:?}, {:?}, {:?}",
-        //     position.x, position.y, position.z
-        // );
-
-        // info!("  tra: {:?}, {:?}, {:?}", tra_x, tra_y, tra_z);
-        info!(
-            "  obj_rot: {:?}, {:?}, {:?}",
-            obj_rot_x, obj_rot_y, obj_rot_z
-        );
-
-        // scale to visual pinball units to meters
-        bevy_mesh.scale_by(Vec3::new(vpu_to_m(1.0), vpu_to_m(1.0), vpu_to_m(1.0)));
-
-        // apply the object rotation to the mesh
-        bevy_mesh.rotate_by(
-            Quat::from_rotation_x(-obj_rot_x.to_radians())
-                * Quat::from_rotation_y(-obj_rot_z.to_radians())
-                * Quat::from_rotation_z(obj_rot_y.to_radians()),
-        );
-
-        // apply user-defined scale to the mesh
-        bevy_mesh.scale_by(Vec3::new(
-            primitive.size.x,
-            primitive.size.z,
-            primitive.size.y,
-        ));
-
-        bevy_mesh
-    } else {
-        // TODO there is a property that indicates there is no mesh
-        //  in that case it's a cylinder
-        //  the number of sides indicates how many segments the circle has
-
-        // we need to create a cylinder
-        // TODO how do we control the number of faces?
-        // TODO how do we fix the size correctly?
-        let cylinder = Cylinder {
-            radius: 0.01,
-            half_height: 0.1,
-        };
-        //let cylinder = Extrusion::new(Circle { radius: 0.01 }, 0.1);
-        cylinder.into()
-    };
-
-    // apply world rotation to the mesh
-    info!("  rot: {:?}, {:?}, {:?}", rot_x, rot_y, rot_z);
-    let rotation_transform = Transform::from_rotation(
-        Quat::from_rotation_x(-rot_x.to_radians())
-            * Quat::from_rotation_y(-rot_z.to_radians())
-            * Quat::from_rotation_z(rot_y.to_radians()),
-    );
-
-    let position = primitive.position;
-
-    // apply world translation to the mesh
-    let translation_transform = Transform::from_translation(Vec3::new(
-        vpu_to_m(position.x),
-        vpu_to_m(position.z),
-        vpu_to_m(position.y),
-    ));
-
-    let transform = translation_transform * rotation_transform;
-
-    let visibility = match primitive.is_visible {
-        true => Visibility::Visible,
-        false => Visibility::Hidden,
-    };
-
-    commands
-        .spawn((
-            Name::new(primitive.name.to_string()),
-            Mesh3d(meshes.add(bevy_mesh)),
-            MeshMaterial3d(material_handle.clone()),
-            transform,
-            visibility, //Wireframe,
-        ))
-        .observe(on_click_print_name);
 }

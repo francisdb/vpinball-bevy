@@ -1,3 +1,4 @@
+use bevy::gizmos::aabb::AabbGizmoPlugin;
 use bevy::input::ButtonInput;
 use bevy::log::info;
 use bevy::prelude::*;
@@ -16,6 +17,11 @@ fn setup_gizmo_config(mut gizmo_config_store: ResMut<GizmoConfigStore>) {
         .config_mut::<LightGizmoConfigGroup>()
         .1
         .draw_all = true;
+
+    // gizmo_config_store
+    //     .config_mut::<AabbGizmoConfigGroup>()
+    //     .1
+    //     .draw_all = true;
 
     gizmo_config_store
         .config_mut::<DefaultGizmoConfigGroup>()

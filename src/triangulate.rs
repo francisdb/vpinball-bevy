@@ -1,4 +1,5 @@
 use bevy::math::Vec2;
+use bevy::prelude::WindingOrder;
 use vpin::vpx::gameitem::dragpoint::DragPoint;
 
 /// Determines if the points are in the correct winding order (counterclockwise)
@@ -8,6 +9,19 @@ pub(crate) fn ensure_ccw_winding(drag_points: &mut Vec<DragPoint>) -> bool {
         return false; // Not enough points to form a proper polygon
     }
 
+    let winding_order = winding(drag_points);
+
+    // If signed area is negative, we have clockwise winding
+    // We need to reverse the points to get counterclockwise winding
+    if winding_order == WindingOrder::Clockwise {
+        drag_points.reverse();
+        return true; // Points were reversed
+    }
+
+    false // Points were already in correct order
+}
+
+fn winding(drag_points: &mut Vec<DragPoint>) -> WindingOrder {
     // Calculate the signed area of the polygon
     // Positive area means counterclockwise winding
     // Negative area means clockwise winding
@@ -18,15 +32,11 @@ pub(crate) fn ensure_ccw_winding(drag_points: &mut Vec<DragPoint>) -> bool {
         signed_area +=
             (drag_points[i].x * drag_points[j].y) - (drag_points[j].x * drag_points[i].y);
     }
-
-    // If signed area is negative, we have clockwise winding
-    // We need to reverse the points to get counterclockwise winding
     if signed_area < 0.0 {
-        drag_points.reverse();
-        return true; // Points were reversed
+        WindingOrder::Clockwise
+    } else {
+        WindingOrder::CounterClockwise
     }
-
-    false // Points were already in correct order
 }
 
 pub(crate) fn triangulate_polygon(vertices: &[Vec2]) -> Vec<usize> {
