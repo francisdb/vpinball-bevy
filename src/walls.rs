@@ -54,7 +54,7 @@ pub(crate) fn spawn_wall(
     // Create a mesh builder
     let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
+        RenderAssetUsages::default(),
     );
 
     let top_height = vpu_to_m(wall.height_top);

@@ -12,23 +12,15 @@ use crate::ball::spawn_ball;
 use crate::camera::RotatingCameraPlugin;
 use crate::gizmos::ControlGizmoPlugin;
 use crate::lights::{spawn_light, spawn_overhead_lights};
-use crate::picking::on_click_print_name;
 use crate::primitives::spawn_primitive;
-use crate::triangulate::{ensure_ccw_winding, triangulate_polygon};
 use crate::walls::spawn_wall;
-use bevy::asset::RenderAssetUsages;
 use bevy::asset::io::memory::{Dir, MemoryAssetReader};
 use bevy::asset::io::{AssetSource, AssetSourceId};
-use bevy::color::palettes::basic::WHITE;
-use bevy::core_pipeline::Skybox;
-use bevy::math::bounding::Aabb3d;
-use bevy::pbr::wireframe::{Wireframe, WireframeConfig, WireframePlugin};
-use bevy::pbr::{DirectionalLightShadowMap, PointLightShadowMap};
+
 use bevy::prelude::*;
-use bevy::render::RenderPlugin;
-use bevy::render::mesh::{Indices, MeshAabb, PrimitiveTopology};
-use bevy::render::settings::{RenderCreation, WgpuFeatures, WgpuSettings};
-use bevy::render::view::NoFrustumCulling;
+
+use bevy::render::mesh::PrimitiveTopology;
+use bevy_dev_tools::picking_debug::{DebugPickingMode, DebugPickingPlugin};
 use bevy_inspector_egui::bevy_egui::EguiPlugin;
 use bevy_inspector_egui::quick::WorldInspectorPlugin;
 use std::collections::HashMap;
@@ -36,12 +28,8 @@ use std::env;
 use std::path::Path;
 use std::process::ExitCode;
 use vpin::vpx::gameitem::GameItemEnum;
-use vpin::vpx::gameitem::dragpoint::DragPoint;
-use vpin::vpx::gameitem::light::Light;
-use vpin::vpx::gameitem::primitive::{Primitive, ReadMesh};
-use vpin::vpx::gameitem::wall::Wall;
+
 use vpin::vpx::material::MaterialType;
-use vpin::vpx::model::Vertex3dNoTex2;
 use vpin::vpx::{VPX, vpu_to_m};
 
 #[derive(Component)]
@@ -126,7 +114,7 @@ fn main() -> ExitCode {
             table_height_m,
         })
         // Set the background color to light gray
-        .insert_resource(ClearColor(Color::srgb(0.0, 0.0, 0.0)))
+        .insert_resource(ClearColor(Color::srgb(0.2, 0.2, 0.2)))
         .insert_resource(AmbientLight {
             color: Color::BLACK,
             // TODO get this from the table
@@ -183,6 +171,23 @@ fn main() -> ExitCode {
         })
         .add_plugins(WorldInspectorPlugin::default())
         .add_plugins(MeshPickingPlugin)
+        .add_plugins(DebugPickingPlugin)
+        .insert_resource(DebugPickingMode::Normal)
+        // A system that cycles the debugging state when you press F3:
+        .add_systems(
+            PreUpdate,
+            (|mut mode: ResMut<DebugPickingMode>| {
+                *mode = match *mode {
+                    DebugPickingMode::Disabled => DebugPickingMode::Normal,
+                    DebugPickingMode::Normal => DebugPickingMode::Noisy,
+                    DebugPickingMode::Noisy => DebugPickingMode::Disabled,
+                };
+                info!("Debug picking mode: {:?}", *mode);
+            })
+            .distributive_run_if(bevy::input::common_conditions::input_just_pressed(
+                KeyCode::F3,
+            )),
+        )
         .run();
     match app_exit {
         AppExit::Success => ExitCode::SUCCESS,

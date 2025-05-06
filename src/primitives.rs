@@ -5,6 +5,7 @@ use bevy::math::{Quat, Vec3};
 use bevy::pbr::{MeshMaterial3d, StandardMaterial};
 use bevy::prelude::{Commands, Cylinder, Mesh, Mesh3d, Name, ResMut, Transform, Visibility};
 use bevy::render::mesh::{Indices, MeshAabb, PrimitiveTopology};
+use bevy_picking::Pickable;
 use std::collections::HashMap;
 use vpin::vpx::gameitem::primitive::{Primitive, ReadMesh};
 use vpin::vpx::{VPX, vpu_to_m};
@@ -67,7 +68,7 @@ pub(crate) fn spawn_primitive(
     let bevy_mesh = if let Some(ReadMesh { vertices, indices }) = mesh {
         let mut bevy_mesh = Mesh::new(
             PrimitiveTopology::TriangleList,
-            RenderAssetUsages::RENDER_WORLD,
+            RenderAssetUsages::default(),
         );
 
         let positions: Vec<[f32; 3]> = vertices.iter().map(|(_, v)| [v.x, -v.z, v.y]).collect();
@@ -174,6 +175,7 @@ pub(crate) fn spawn_primitive(
             MeshMaterial3d(material_handle.clone()),
             transform,
             visibility, //Wireframe,
+            Pickable::default(),
         ))
         .observe(on_click_print_name);
 }
