@@ -36,9 +36,9 @@ pub(crate) fn spawn_wall(
     // first we need to check if the wall.drag_points are in the right order, otherwise we need to reverse them
 
     // print all drag points
-    for (i, drag_point) in wall.drag_points.iter().enumerate() {
-        info!("  drag point {}: {:?}", i, drag_point);
-    }
+    // for (i, drag_point) in wall.drag_points.iter().enumerate() {
+    //     info!("  drag point {}: {:?}", i, drag_point);
+    // }
 
     let mut drag_points = wall.drag_points.clone();
 

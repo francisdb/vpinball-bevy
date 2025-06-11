@@ -11,7 +11,7 @@ mod walls;
 use crate::ball::spawn_ball;
 use crate::camera::RotatingCameraPlugin;
 use crate::gizmos::ControlGizmoPlugin;
-use crate::lights::{spawn_light, spawn_overhead_lights};
+use crate::lights::{ControlLightsPlugin, spawn_light, spawn_overhead_lights};
 use crate::primitives::spawn_primitive;
 use crate::walls::spawn_wall;
 use bevy::asset::io::memory::{Dir, MemoryAssetReader};
@@ -172,6 +172,7 @@ fn main() -> ExitCode {
         .add_plugins(WorldInspectorPlugin::default())
         .add_plugins(MeshPickingPlugin)
         .add_plugins(DebugPickingPlugin)
+        .add_plugins(ControlLightsPlugin)
         .insert_resource(DebugPickingMode::Normal)
         // A system that cycles the debugging state when you press F3:
         .add_systems(

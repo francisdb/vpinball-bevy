@@ -1,11 +1,45 @@
 use crate::TableResource;
+use bevy::app::{App, Plugin, Startup, Update};
 use bevy::color::Color;
+use bevy::input::ButtonInput;
 use bevy::log::info;
 use bevy::math::Vec3;
 use bevy::pbr::PointLight;
-use bevy::prelude::{Commands, Name, Res, Transform, Visibility, default};
+use bevy::prelude::*;
 use vpin::vpx::gameitem::light::Light;
 use vpin::vpx::vpu_to_m;
+
+#[derive(Resource, Debug)]
+enum LightToggleState {
+    Off,
+    On,
+    Default,
+}
+
+impl LightToggleState {
+    fn toggle(&mut self) {
+        *self = match *self {
+            LightToggleState::Off => LightToggleState::On,
+            LightToggleState::On => LightToggleState::Default,
+            LightToggleState::Default => LightToggleState::Off,
+        };
+    }
+}
+
+#[derive(Component)]
+struct VPLight {
+    default_state: f32,
+    intensity: f32,
+}
+
+pub(crate) struct ControlLightsPlugin;
+
+impl Plugin for ControlLightsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, setup_light_toggle_state)
+            .add_systems(Update, toggle_lights_system);
+    }
+}
 
 pub(crate) fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableResource>) {
     // Visual Pinball defines two overhead lights positioned at 1/3 and 2/3 of the table length
@@ -87,7 +121,10 @@ pub(crate) fn spawn_overhead_lights(commands: &mut Commands, table: Res<TableRes
 }
 
 pub(crate) fn spawn_light(commands: &mut Commands, light: &Light) {
-    info!("Spawning light: {}", light.name);
+    info!(
+        "Spawning light: {}, state: {:?}, intensity: {}, range {}",
+        light.name, light.state, light.intensity, light.falloff_radius
+    );
     let color = Color::srgb_u8(light.color.r, light.color.g, light.color.b);
     let position = Vec3::new(
         vpu_to_m(light.center.x),
@@ -100,23 +137,58 @@ pub(crate) fn spawn_light(commands: &mut Commands, light: &Light) {
     // Some lights have a mesh, like the lights near the slingshots
     // TODO can we show these kinds of lights in bevy?
 
-    let visibility = match light.visible {
-        Some(false) => Visibility::Hidden,
-        _ => Visibility::Visible,
-    };
+    let visibility = visible_to_visibility(light.visible);
+
+    let default_state = light.state.unwrap_or(light.state_u32 as f32);
 
     commands.spawn((
         Name::new(light.name.to_string()),
+        VPLight {
+            default_state,
+            intensity: light.intensity,
+        },
         PointLight {
             // FIXME enabling shadows slows down the rendering
             // shadows_enabled: true,
             // shadow_depth_bias: 0.0,
             range: vpu_to_m(light.falloff_radius),
-            intensity: light.intensity,
+            intensity: light.intensity * default_state,
             color,
             ..default()
         },
         visibility,
         transform,
     ));
+}
+
+fn toggle_lights_system(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    mut query: Query<(&mut PointLight, &VPLight)>,
+    mut state: ResMut<LightToggleState>,
+) {
+    if keyboard_input.just_pressed(KeyCode::KeyL) {
+        state.toggle();
+
+        for (mut point_light, vp_light) in query.iter_mut() {
+            point_light.intensity = match state.as_ref() {
+                LightToggleState::Off => vp_light.intensity * 0.0,
+                LightToggleState::On => vp_light.intensity * 1.0,
+                LightToggleState::Default => vp_light.intensity * vp_light.default_state,
+            };
+        }
+
+        info!("All lights are now {:?}", state);
+    }
+}
+
+fn setup_light_toggle_state(mut commands: Commands) {
+    commands.insert_resource(LightToggleState::Default);
+}
+
+fn visible_to_visibility(visible: Option<bool>) -> Visibility {
+    match visible {
+        Some(true) => Visibility::Visible,
+        Some(false) => Visibility::Hidden,
+        None => Visibility::Visible,
+    }
 }
